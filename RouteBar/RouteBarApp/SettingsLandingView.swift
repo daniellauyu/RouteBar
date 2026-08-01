@@ -10,7 +10,19 @@ struct SettingsLandingView: View {
     @AppStorage(DockIconVisibility.defaultsKey) private var hidesDockIcon = false
     @AppStorage("appearance") private var appearanceRaw = AppAppearance.system.rawValue
     @AppStorage("defaultWindowSize") private var defaultWindowSizeRaw = DefaultWindowSize.small.rawValue
+    @AppStorage("latencyTestURL") private var latencyTestURL = LatencyTestEndpoint.fallback.rawValue
+    @AppStorage("latencySamples") private var latencySamples = 3
+    @AppStorage("latencyTestUsesCustom") private var usesCustomEndpoint = false
     @State private var loginItem = LoginItem.state
+    /// 自定义地址的编辑缓冲。
+    ///
+    /// 不直接绑到 `latencyTestURL`：那样每敲一个字符都会写进设置，中间态（`htt`、`https:/`）
+    /// 会被当成非法值回落到默认端点，选择器随即跳回预设，人还没打完就被打断了。
+    @State private var customEndpoint = ""
+
+    /// Picker 用来表示「自定义」的哨兵值。用一个不可能是合法 URL 的字符串，
+    /// 免得和用户真填的地址撞上。
+    static let customEndpointTag = "routebar.custom-endpoint"
 
     var body: some View {
         ScrollView {
@@ -39,6 +51,51 @@ struct SettingsLandingView: View {
                         Text(nextUpdateText)
                             .font(.callout)
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                settingsSection("测速") {
+                    settingsRow(
+                        title: "测试端点",
+                        detail: "测速会经本地端口请求这个地址，测的是整条链路（含 TLS 与 Reality 握手），不是 ping。换端点后所有数字会整体平移，不要和换之前的比。"
+                    ) {
+                        Picker("测试端点", selection: endpointSelection) {
+                            ForEach(LatencyTestEndpoint.allCases) { endpoint in
+                                Text(endpoint.label).tag(endpoint.rawValue)
+                            }
+                            Divider()
+                            Text("自定义").tag(Self.customEndpointTag)
+                        }
+                        .labelsHidden()
+                        .frame(width: 150)
+                    }
+                    if isCustomEndpoint {
+                        settingsRow(
+                            title: "自定义地址",
+                            detail: "建议用返回 204 空响应的连通性检测地址；返回正文的页面会把下载时间算进延迟。",
+                            detailColor: customEndpointIsValid ? .secondary : .orange
+                        ) {
+                            TextField("https://…", text: $customEndpoint)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 240)
+                                .onSubmit { applyCustomEndpoint() }
+                                .onChange(of: customEndpoint) { _, _ in applyCustomEndpoint() }
+                        }
+                    }
+                    Divider()
+                    settingsRow(
+                        title: "每个节点测几次",
+                        detail: latencySamples == 1
+                            ? "只测一次最快，但单次网络抖动会直接体现为一个离谱的数字。"
+                            : "取最好的一次，排除偶发抖动。测试全部节点的耗时大致按次数成倍增加。"
+                    ) {
+                        Picker("每个节点测几次", selection: $latencySamples) {
+                            Text("1 次").tag(1)
+                            Text("3 次").tag(3)
+                            Text("5 次").tag(5)
+                        }
+                        .labelsHidden()
+                        .frame(width: 100)
                     }
                 }
 
@@ -129,6 +186,42 @@ struct SettingsLandingView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             loginItem = LoginItem.state
         }
+        .onAppear {
+            if usesCustomEndpoint, customEndpoint.isEmpty { customEndpoint = latencyTestURL }
+        }
+    }
+
+    // MARK: - 测速端点
+
+    private var isCustomEndpoint: Bool { usesCustomEndpoint }
+
+    private var customEndpointIsValid: Bool {
+        guard let url = URL(string: customEndpoint.trimmingCharacters(in: .whitespaces)) else { return false }
+        return url.scheme != nil && url.host != nil
+    }
+
+    /// Picker 的选中值：预设时就是那条 URL，自定义时是哨兵值。
+    private var endpointSelection: Binding<String> {
+        Binding(
+            get: { usesCustomEndpoint ? Self.customEndpointTag : latencyTestURL },
+            set: { newValue in
+                if newValue == Self.customEndpointTag {
+                    usesCustomEndpoint = true
+                    // 带着当前地址进入编辑，用户通常只想改其中一段。
+                    if customEndpoint.isEmpty { customEndpoint = latencyTestURL }
+                    applyCustomEndpoint()
+                } else {
+                    usesCustomEndpoint = false
+                    latencyTestURL = newValue
+                }
+            }
+        )
+    }
+
+    /// 只有在地址合法时才写进设置，避免半截 URL 让测速悄悄回落到默认端点。
+    private func applyCustomEndpoint() {
+        guard customEndpointIsValid else { return }
+        latencyTestURL = customEndpoint.trimmingCharacters(in: .whitespaces)
     }
 
     private var nextUpdateText: String {

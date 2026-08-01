@@ -224,6 +224,17 @@ final class AppModel: ObservableObject {
         await runLatencyTest(mapped)
     }
 
+    /// 测速端点，来自设置（`@AppStorage("latencyTestURL")`），非法值回落到默认端点。
+    var latencyTestURL: URL {
+        LatencyTestEndpoint.resolve(UserDefaults.standard.string(forKey: "latencyTestURL") ?? "")
+    }
+
+    /// 每节点采样次数，来自设置。1 表示只测一次（快，但结果会跳）。
+    var latencySamples: Int {
+        let stored = UserDefaults.standard.integer(forKey: "latencySamples")
+        return (1...5).contains(stored) ? stored : 3
+    }
+
     private func runLatencyTest(_ mapped: [PortMappedNode]) async {
         guard !mapped.isEmpty else {
             alertMessage = "没有可测试的启用节点。"
@@ -235,7 +246,7 @@ final class AppModel: ObservableObject {
         }
         let ids = Set(mapped.map(\.node.id))
         testingNodeIDs.formUnion(ids)
-        apply(await coordinator.testNodes(mapped))
+        apply(await coordinator.testNodes(mapped, testURL: latencyTestURL, samples: latencySamples))
         testingNodeIDs.subtract(ids)
     }
 

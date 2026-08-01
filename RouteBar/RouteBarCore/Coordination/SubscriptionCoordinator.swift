@@ -252,13 +252,19 @@ public actor SubscriptionCoordinator {
         return (try? ConfigurationGenerator.generate(nodes: merged).nodes) ?? []
     }
 
-    public func testNodes(_ mapped: [PortMappedNode]) async -> CoordinatorOutcome {
+    /// 测试一批节点。测速端点与采样次数由调用方（设置）给出，不在引擎里写死。
+    public func testNodes(_ mapped: [PortMappedNode],
+                          testURL: URL,
+                          samples: Int) async -> CoordinatorOutcome {
         guard !mapped.isEmpty else { return outcome() }
-        let results = await latencyTester.test(mapped)
-        return applyLatency(results)
+        var tester = latencyTester
+        tester.testURL = testURL
+        tester.samples = samples
+        let results = await tester.test(mapped)
+        return applyLatency(results, endpoint: testURL)
     }
 
-    private func applyLatency(_ results: [String: LatencyRecord]) -> CoordinatorOutcome {
+    private func applyLatency(_ results: [String: LatencyRecord], endpoint: URL) -> CoordinatorOutcome {
         for subscriptionIndex in subscriptions.indices {
             for nodeIndex in subscriptions[subscriptionIndex].nodes.indices {
                 let id = subscriptions[subscriptionIndex].nodes[nodeIndex].id
@@ -269,7 +275,10 @@ public actor SubscriptionCoordinator {
         }
         try? persist()
         let succeeded = results.values.filter { $0.outcome == .success }.count
-        return outcome([.init(.info, "测速", "完成 \(results.count) 个节点：\(succeeded) 可用 · \(results.count - succeeded) 失败")])
+        // 记下用了哪个端点：换端点后数字会整体平移，日志里没有这一条就无从解释。
+        let host = endpoint.host ?? endpoint.absoluteString
+        return outcome([.init(.info, "测速",
+                              "完成 \(results.count) 个节点（经 \(host)）：\(succeeded) 可用 · \(results.count - succeeded) 失败")])
     }
 
     // MARK: - 服务控制

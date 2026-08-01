@@ -121,3 +121,16 @@ struct ConfigurationGeneratorTests {
         #expect(LaunchCtlStatusParser.parse(exitCode: 113, output: "Could not find service") == .stopped)
     }
 }
+
+@Suite struct LatencyTestEndpointTests {
+    @Test func resolvesPresetsAndFallsBackOnGarbage() {
+        #expect(LatencyTestEndpoint.resolve(LatencyTestEndpoint.gstatic.rawValue).host == "www.gstatic.com")
+        #expect(LatencyTestEndpoint.resolve("https://example.com/204").host == "example.com")
+
+        // 半截 URL、空串、纯文本都不能让测速悄悄打到一个不存在的地址上。
+        let fallbackHost = URL(string: LatencyTestEndpoint.fallback.rawValue)?.host
+        #expect(LatencyTestEndpoint.resolve("").host == fallbackHost)
+        #expect(LatencyTestEndpoint.resolve("https:/").host == fallbackHost)
+        #expect(LatencyTestEndpoint.resolve("随便写的").host == fallbackHost)
+    }
+}
