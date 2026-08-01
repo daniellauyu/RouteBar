@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.6.1
+
+节点列表显示上游协议，并修复 CLI 在遇到未启用节点时崩溃。
+
+- 新增 `ProxyNode.protocolLabel`（`VLESS-Reality` / `VLESS`），窗口列表、详情栏、
+  网页、命令行四处共用。详情栏原来写死 `"VLESS over TCP"`，写死的话它永远不会跟着
+  解析器变。
+- 今天它对每个节点都是同一个值，因为 `VLESSParser` 只认 VLESS Reality 链接——
+  订阅里的 ss / trojan / vmess 会被**静默丢弃**。标出协议正是为了让「导入的节点比订阅里少」
+  这件事有迹可循。
+- **修复 `routebar nodes` 崩溃**：值为 nil 的可选字段会被 JSONEncoder 整个省略而非编成
+  `null`，未启用的节点压根没有 `localPort` 键，下标取直接 KeyError。这条约定已写进
+  `APICoding` 的文档注释，消费方需按「键可能不存在」处理。
+
 ## v1.6.0
 
 Web 界面的订阅可以编辑了：名称、订阅地址、备注、更新间隔。

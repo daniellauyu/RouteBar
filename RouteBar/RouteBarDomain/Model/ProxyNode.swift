@@ -38,6 +38,16 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
         self.isEnabled = isEnabled
         self.latency = latency
     }
+
+    /// 节点在**上游**用的协议，与 RouteBar 在本机暴露出的 SOCKS5 相区别。
+    ///
+    /// 列表里只看得到本地端口，那是 RouteBar 造出来的壳；真正决定这个节点能不能连通的是
+    /// 上游协议。今天它对每个节点都是同一个值，因为 `VLESSParser` 只认 VLESS Reality 链接——
+    /// 订阅里的 ss / trojan / vmess 会被**静默丢弃**。把协议标出来，正是为了让「导入的节点
+    /// 比订阅里少」这件事有迹可循，而不是让人以为节点凭空少了。
+    public nonisolated var protocolLabel: String {
+        publicKey.isEmpty ? "VLESS" : "VLESS-Reality"
+    }
 }
 
 /// 节点合并与状态承接。

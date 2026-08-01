@@ -48,6 +48,16 @@ import Testing
         #expect(fromMapping == (try ConfigurationGenerator.generate(nodes: nodes)).surgePolicyList)
     }
 
+    /// 协议标签区分带不带 Reality。四个界面（窗口列表、详情栏、网页、命令行）读同一处，
+    /// 详情栏原来写死的 "VLESS over TCP" 已换掉——写死的话它永远不会跟着解析器变。
+    @Test func protocolLabelDistinguishesRealityFromPlainVLESS() {
+        #expect(node("a").protocolLabel == "VLESS-Reality")
+
+        var plain = node("b")
+        plain.publicKey = ""
+        #expect(plain.protocolLabel == "VLESS")
+    }
+
     @Test func outputModeControlsWhichSideIsWritten() {
         #expect(SurgeOutputMode.profile.writesProfile)
         #expect(!SurgeOutputMode.profile.servesSubscription)

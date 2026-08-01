@@ -30,7 +30,7 @@ struct NodeInspectorView: View {
                             Divider()
                             InfoRow("端口", "\(node.serverPort)")
                             Divider()
-                            InfoRow("协议", "VLESS over TCP")
+                            InfoRow("协议", node.protocolLabel)
                         }
 
                         InfoCard("Reality") {

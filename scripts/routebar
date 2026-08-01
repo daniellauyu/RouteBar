@@ -186,11 +186,14 @@ def print_nodes(data, keyword=None):
     latency_width = max(display_width(latency_plain(n)) for _, n in nodes)
     for index, node in nodes:
         flag = " " if node["enabled"] else dim("×")
-        port = str(node["localPort"]).rjust(5) if node["localPort"] else "    —"
+        # 用 .get()：值为 null 的可选字段会被 JSONEncoder 整个省略，未启用的节点
+        # 压根没有 localPort 这个键，下标取会直接 KeyError。
+        port = str(node["localPort"]).rjust(5) if node.get("localPort") else "    —"
         name = node["name"] if node["enabled"] else dim(node["name"])
         padding = " " * max(0, width - display_width(node["name"]))
         print(f"{dim(f'{index:>3}')} {flag} {name}{padding}"
-              f"  {dim(port)}  {latency_cell(node, latency_width)}  {dim(node['server'])}")
+              f"  {dim(port)}  {latency_cell(node, latency_width)}"
+              f"  {dim(node['protocolLabel'])}  {dim(node['server'])}")
 
 
 def print_subscriptions(data):

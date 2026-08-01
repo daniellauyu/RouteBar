@@ -112,6 +112,8 @@ public struct APINode: nonisolated Codable, Sendable {
     public var name: String
     /// 只给出主机名，不给 VLESS 凭据。
     public var server: String
+    /// 上游协议（与 RouteBar 在本机暴露的 SOCKS5 相区别）。
+    public var protocolLabel: String
     public var enabled: Bool
     /// 未启用的节点没有本地端口。
     public var localPort: Int?
@@ -127,6 +129,7 @@ public struct APINode: nonisolated Codable, Sendable {
         id = node.id
         name = node.name
         server = node.server
+        protocolLabel = node.protocolLabel
         enabled = node.isEnabled
         self.localPort = localPort
         latencyMilliseconds = node.latency?.milliseconds
@@ -211,6 +214,10 @@ public struct APILogs: nonisolated Codable, Sendable {
 }
 
 /// API 的 JSON 编解码约定：日期一律 ISO 8601，键名保持驼峰。
+///
+/// **可选字段为 nil 时整个键会被省略，而不是编成 `null`**（`JSONEncoder` 的默认行为）。
+/// 消费方取 `localPort`、`latencyMilliseconds`、`measuredAt` 这类字段时必须按「键可能不存在」
+/// 处理——未启用的节点没有本地端口，未测速的节点没有延迟。
 public enum APICoding {
     public nonisolated static func encoder() -> JSONEncoder {
         let encoder = JSONEncoder()

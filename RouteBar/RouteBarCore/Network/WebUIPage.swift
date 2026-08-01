@@ -420,7 +420,9 @@ enum WebUIPage {
         const left = element('div', 'grow');
         left.append(element('div', null, node.name));
         const meta = element('div', 'dim');
-        meta.textContent = node.server + (node.localPort ? ' · 本地 ' + node.localPort : '');
+        // 协议是上游的，本地端口是 RouteBar 造出来的壳——两者并列才说得清这一行是什么。
+        meta.textContent = node.protocolLabel + ' · ' + node.server +
+          (node.localPort ? ' · 本地 ' + node.localPort : '');
         left.append(meta);
 
         const right = element('div', 'row');

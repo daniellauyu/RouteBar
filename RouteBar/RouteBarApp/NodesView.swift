@@ -270,6 +270,6 @@ private struct NodeRow: View {
     /// `Text("端口 \(int)")` 走的是 SwiftUI 的本地化插值，会给整数加千位分隔符——
     /// 端口 7737 显示成「7,737」，看着像个金额。
     private var subtitle: String {
-        "\(source) · 端口 \(item.localPort) · \(item.node.server)"
+        "\(item.node.protocolLabel) · \(source) · 端口 \(item.localPort) · \(item.node.server)"
     }
 }
