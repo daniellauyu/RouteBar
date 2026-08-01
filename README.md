@@ -110,6 +110,27 @@ Web 界面能做的事和窗口一样：增删订阅、启停节点、测速、�
 - **只在 RouteBar 运行时可访问。** Surge 会缓存上一次拉到的列表，所以进程没开不会立刻断，
   但拿不到新节点。要长期可靠，在「通用 → 启动」里打开登录自启。
 
+## 命令行
+
+`scripts/routebar` 是同一套 API 的命令行客户端，只依赖 Python 3 标准库。
+端口与令牌从 `settings.json` 读，不需要另外配置：
+
+```bash
+ln -s "$PWD/scripts/routebar" /usr/local/bin/routebar   # 装到 PATH 上（可选）
+
+routebar                    # 等同 status
+routebar nodes 韓國         # 按关键词筛节点，列出序号/端口/延迟
+routebar test 5             # 测速，可用序号、完整名或名字的一部分
+routebar off 5              # 停用节点（配置会在 0.5 秒后合并重装）
+routebar update             # 更新全部订阅
+routebar url | pbcopy       # 订阅地址
+routebar surge              # 可直接粘进 Surge 的策略组行
+routebar web                # 浏览器打开 Web 界面
+```
+
+`routebar help` 列出全部命令。名字匹配到多个时会把候选列出来要求说得更具体，
+不会猜一个执行。检测到输出被重定向（或设了 `NO_COLOR`）时自动去掉颜色。
+
 ## 日志
 
 - **运行日志**页：RouteBar 自身的诊断记录（内存保留最近 1000 条，重启清空），

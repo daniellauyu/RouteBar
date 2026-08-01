@@ -1,0 +1,407 @@
+#!/usr/bin/env python3
+"""RouteBar 命令行客户端。
+
+走的是 RouteBar 自己那个本地 HTTP API（`127.0.0.1:<端口>/<令牌>/api/…`），
+因此它做的每件事和在窗口里、网页上做的完全等价——同一个引擎、同一组动词。
+
+端口与令牌从 settings.json 读，不需要单独配置。只依赖 Python 3 标准库。
+
+前提：RouteBar 正在运行，且「通用 → 输出到 Surge」选了包含订阅地址的方式
+（本地服务只在那时才监听）。
+"""
+
+import datetime
+import json
+import os
+import shutil
+import subprocess
+import sys
+import unicodedata
+import urllib.error
+import urllib.request
+
+SETTINGS = os.path.expanduser("~/Library/Application Support/RouteBar/settings.json")
+TIMEOUT = 120  # 全量测速要逐个节点跑，比其它请求慢得多
+
+# 只在输出到终端时上色；重定向到文件或管道时保持纯文本。
+COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+
+
+def paint(text, code):
+    return f"\033[{code}m{text}\033[0m" if COLOR else str(text)
+
+
+def dim(t): return paint(t, "2")
+def bold(t): return paint(t, "1")
+def green(t): return paint(t, "32")
+def yellow(t): return paint(t, "33")
+def red(t): return paint(t, "31")
+
+
+def die(message, hint=None):
+    print(f"{red('错误')} {message}", file=sys.stderr)
+    if hint:
+        print(f"     {dim(hint)}", file=sys.stderr)
+    sys.exit(1)
+
+
+def base_url():
+    if not os.path.exists(SETTINGS):
+        die("找不到 RouteBar 的设置文件",
+            f"{SETTINGS}\n     先启动一次 RouteBar，它会在首次运行时写出这个文件。")
+    try:
+        with open(SETTINGS, encoding="utf-8") as handle:
+            settings = json.load(handle)
+    except (OSError, ValueError) as error:
+        die(f"读取设置失败：{error}")
+
+    token = settings.get("subscriptionToken")
+    port = settings.get("subscriptionPort")
+    if not token or not port:
+        die("设置里没有本地服务的端口或令牌",
+            "打开 RouteBar →「通用 → 输出到 Surge」，选择包含订阅地址的方式。")
+    return f"http://127.0.0.1:{port}/{token}"
+
+
+def request(path, method="GET", payload=None):
+    url = base_url() + path
+    data = json.dumps(payload or {}).encode() if method != "GET" else None
+    # 服务端要求写操作声明 JSON——这是它拒绝跨源简单请求的依据。
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
+            body = response.read().decode()
+        return json.loads(body) if body else None
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode()
+        try:
+            detail = json.loads(detail).get("error", detail)
+        except ValueError:
+            pass
+        die(f"HTTP {error.code}：{detail}")
+    except urllib.error.URLError as error:
+        die(f"连不上本地服务：{error.reason}",
+            "RouteBar 没在运行，或「通用 → 输出到 Surge」没有选包含订阅地址的方式。")
+    except TimeoutError:
+        die(f"请求超时（{TIMEOUT}s）。全量测速节点较多时可能确实需要更久。")
+
+
+def state():
+    return request("/api/state")
+
+
+# ---------------------------------------------------------------- 展示
+
+def display_width(text):
+    """终端里的实际列宽。
+
+    节点名基本都是中文，一个汉字占两列。用 len() 对齐会让整张表歪掉。
+    """
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in text)
+
+
+def when(iso):
+    """ISO 时间转本地相对说法。API 给的是 UTC，直接打出来没人看得懂。"""
+    if not iso:
+        return "从未更新"
+    try:
+        moment = datetime.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return iso
+    seconds = (datetime.datetime.now(datetime.timezone.utc) - moment).total_seconds()
+    if seconds < 60:
+        return "刚刚"
+    if seconds < 3600:
+        return f"{int(seconds // 60)} 分钟前"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)} 小时前"
+    return moment.astimezone().strftime("%m-%d %H:%M")
+
+
+def latency_plain(node):
+    band = node["band"]
+    if band == "untested":
+        return "未测速"
+    if band == "failed":
+        return node.get("latencyLabel") or "失败"
+    return f"{node['latencyMilliseconds']} ms"
+
+
+def latency_cell(node, width=0):
+    """延迟单元格。
+
+    宽度按纯文本算再补空格：ANSI 转义序列不占列，先上色再 ljust 会让整列错开。
+    """
+    plain = latency_plain(node)
+    band = node["band"]
+    paint_fn = {"untested": dim, "failed": red,
+                "fast": green, "medium": yellow, "slow": red}[band]
+    return paint_fn(plain) + " " * max(0, width - display_width(plain))
+
+
+def print_status(data):
+    mark = {"running": green("●"), "stopped": dim("●"),
+            "needsAttention": yellow("●"), "failed": red("●")}[data["overall"]]
+    print(f"{mark} {bold(data['overallLabel'])}  {dim(data['summary'])}")
+
+    service = data["service"]
+    line = f"  sing-box {service['label']}  {dim(service['launchAgentLabel'])}"
+    if service.get("failureReason"):
+        line += f"\n  {red(service['failureReason'])}"
+    print(line)
+
+    counts = data["counts"]
+    print(f"  节点 {bold(counts['enabledNodes'])}/{counts['nodes']} 启用"
+          f" · 去重 {counts['deduplicated']}"
+          f" · 已测速 {counts['tested']}"
+          f" · 测速失败 {counts['failedLatency']}")
+
+    output = data["output"]
+    if output["servesSubscription"]:
+        health = green("服务中") if output["serving"] else red(output.get("error") or "未启动")
+        print(f"  订阅 {output['subscriptionURL']}  {health}")
+
+    for message in data["health"]:
+        print(f"  {yellow('⚠')} {message}")
+
+
+def print_nodes(data, keyword=None):
+    nodes = data["nodes"]
+    if keyword:
+        needle = keyword.lower()
+        nodes = [n for n in nodes
+                 if needle in n["name"].lower() or needle in n["server"].lower()]
+    if not nodes:
+        print(dim("没有匹配的节点。"))
+        return
+
+    width = max(display_width(n["name"]) for n in nodes)
+    latency_width = max(display_width(latency_plain(n)) for n in nodes)
+    for index, node in enumerate(nodes, 1):
+        flag = " " if node["enabled"] else dim("×")
+        port = str(node["localPort"]).rjust(5) if node["localPort"] else "    —"
+        name = node["name"] if node["enabled"] else dim(node["name"])
+        padding = " " * max(0, width - display_width(node["name"]))
+        print(f"{dim(f'{index:>3}')} {flag} {name}{padding}"
+              f"  {dim(port)}  {latency_cell(node, latency_width)}  {dim(node['server'])}")
+
+
+def print_subscriptions(data):
+    subs = data["subscriptions"]
+    if not subs:
+        print(dim("还没有订阅。用 `routebar add <名称> <地址>` 添加。"))
+        return
+    for index, sub in enumerate(subs, 1):
+        flag = " " if sub["enabled"] else dim("×")
+        print(f"{dim(f'{index:>3}')} {flag} {bold(sub['name'])}  "
+              f"{sub['nodeCount']} 个节点 · {sub['statusLabel']} · {dim(when(sub.get('updatedAt')))}")
+        if sub.get("lastError"):
+            print(f"      {red(sub['lastError'])}")
+
+
+# ------------------------------------------------------- 按名字/序号定位
+
+def resolve(items, query, label):
+    """按 1 起的序号、精确名、或名字子串定位一项。
+
+    节点 id 是 64 位 SHA256 十六进制串，没人会去敲；命令行里能用的只有序号和名字。
+    """
+    if query.isdigit():
+        index = int(query) - 1
+        if 0 <= index < len(items):
+            return items[index]
+        die(f"{label}序号超出范围：{query}（共 {len(items)} 项）")
+
+    exact = [i for i in items if i["name"] == query]
+    if len(exact) == 1:
+        return exact[0]
+
+    needle = query.lower()
+    matches = [i for i in items if needle in i["name"].lower()]
+    if not matches:
+        die(f"没有匹配「{query}」的{label}")
+    if len(matches) > 1:
+        names = "\n     ".join(m["name"] for m in matches[:10])
+        die(f"「{query}」匹配到 {len(matches)} 个{label}，请说得更具体：",
+            names)
+    return matches[0]
+
+
+# ---------------------------------------------------------------- 命令
+
+def cmd_status(args):
+    print_status(state())
+
+
+def cmd_nodes(args):
+    print_nodes(state(), args[0] if args else None)
+
+
+def cmd_subs(args):
+    print_subscriptions(state())
+
+
+def cmd_update(args):
+    if args:
+        sub = resolve(state()["subscriptions"], args[0], "订阅")
+        print(dim(f"更新「{sub['name']}」…"))
+        data = request(f"/api/subscriptions/{sub['id']}/update", "POST")
+    else:
+        print(dim("更新全部订阅…"))
+        data = request("/api/update", "POST")
+    print_status(data)
+
+
+def cmd_test(args):
+    if args:
+        node = resolve(state()["nodes"], args[0], "节点")
+        print(dim(f"测速「{node['name']}」…"))
+        data = request(f"/api/nodes/{node['id']}/test", "POST")
+        fresh = next(n for n in data["nodes"] if n["id"] == node["id"])
+        print(f"{fresh['name']}  {latency_cell(fresh)}")
+    else:
+        print(dim("全部节点测速中，可能需要一会儿…"))
+        print_nodes(request("/api/nodes/test", "POST"))
+
+
+def _toggle_node(args, enabled, verb):
+    if not args:
+        die(f"用法：routebar {verb} <节点序号|名字>")
+    node = resolve(state()["nodes"], args[0], "节点")
+    data = request(f"/api/nodes/{node['id']}/enabled", "POST", {"enabled": enabled})
+    print(f"已{verb}「{node['name']}」 · 当前启用 {bold(data['counts']['enabledNodes'])} 个节点")
+    print(dim("配置会在约 0.5 秒后合并重装（连续开关只重装一次）。"))
+
+
+def cmd_enable(args): _toggle_node(args, True, "启用")
+def cmd_disable(args): _toggle_node(args, False, "停用")
+
+
+def cmd_add(args):
+    if len(args) < 2:
+        die("用法：routebar add <名称> <订阅地址>")
+    data = request("/api/subscriptions", "POST",
+                   {"name": args[0], "url": args[1], "intervalHours": 6})
+    print(f"已添加「{args[0]}」")
+    print_status(data)
+
+
+def cmd_remove(args):
+    if not args:
+        die("用法：routebar remove <订阅序号|名字>")
+    sub = resolve(state()["subscriptions"], args[0], "订阅")
+    answer = input(f"删除订阅「{sub['name']}」（{sub['nodeCount']} 个节点）？[y/N] ")
+    if answer.strip().lower() not in ("y", "yes"):
+        print(dim("已取消。"))
+        return
+    request(f"/api/subscriptions/{sub['id']}", "DELETE")
+    print(f"已删除「{sub['name']}」")
+
+
+def cmd_regen(args):
+    print(dim("重新生成配置并重启 sing-box…"))
+    print_status(request("/api/regenerate", "POST"))
+
+
+def cmd_start(args): print_status(request("/api/service/start", "POST"))
+def cmd_stop(args): print_status(request("/api/service/stop", "POST"))
+def cmd_restart(args): print_status(request("/api/service/start", "POST"))
+
+
+def cmd_url(args):
+    # 只打地址，方便 `routebar url | pbcopy`。
+    print(state()["output"]["subscriptionURL"])
+
+
+def cmd_surge(args):
+    print(state()["output"]["surgePolicyLine"])
+
+
+def cmd_web(args):
+    url = base_url() + "/"
+    if shutil.which("open"):
+        subprocess.run(["open", url], check=False)
+    print(url)
+
+
+def cmd_logs(args):
+    data = request("/api/logs")
+    which = args[0] if args else "runtime"
+    if which in ("runtime", "rb"):
+        print("\n".join(data["runtime"]) or dim("（暂无记录）"))
+    elif which in ("error", "err"):
+        print(data["singBoxError"] or dim("（暂无记录）"))
+    elif which in ("out", "std", "standard"):
+        print(data["singBoxStandard"] or dim("（暂无记录）"))
+    else:
+        die(f"未知的日志类型：{which}", "可选：runtime（默认）、error、out")
+
+
+def cmd_help(args):
+    print(f"""{bold('routebar')} — RouteBar 命令行客户端
+
+{bold('查看')}
+  status                  总体状态、服务、节点统计
+  nodes [关键词]          节点列表（序号 · 启用 · 本地端口 · 延迟 · 主机）
+  subs                    订阅列表
+  logs [runtime|error|out]  日志，默认 runtime
+
+{bold('订阅')}
+  update [订阅]           更新全部，或指定一条
+  add <名称> <地址>       添加订阅
+  remove <订阅>           删除订阅（会确认）
+
+{bold('节点')}
+  test [节点]             全部测速，或指定一个
+  enable <节点>           启用
+  disable <节点>          停用
+
+{bold('服务')}
+  start | stop | restart  起停 sing-box
+  regen                   重新生成配置并重启
+
+{bold('地址')}
+  url                     打印订阅地址（可 | pbcopy）
+  surge                   打印可直接粘进 Surge 的策略组行
+  web                     在浏览器打开 Web 界面
+
+{dim('「订阅」和「节点」都可以用列表里的序号、完整名字或名字的一部分来指定。')}
+{dim('需要 RouteBar 正在运行，且输出方式包含订阅地址。')}""")
+
+
+COMMANDS = {
+    "status": cmd_status, "st": cmd_status,
+    "nodes": cmd_nodes, "ls": cmd_nodes,
+    "subs": cmd_subs, "subscriptions": cmd_subs,
+    "update": cmd_update, "up": cmd_update,
+    "add": cmd_add,
+    "remove": cmd_remove, "rm": cmd_remove,
+    "test": cmd_test,
+    "enable": cmd_enable, "on": cmd_enable,
+    "disable": cmd_disable, "off": cmd_disable,
+    "regen": cmd_regen, "regenerate": cmd_regen,
+    "start": cmd_start, "stop": cmd_stop, "restart": cmd_restart,
+    "url": cmd_url, "surge": cmd_surge, "web": cmd_web,
+    "logs": cmd_logs, "log": cmd_logs,
+    "help": cmd_help, "-h": cmd_help, "--help": cmd_help,
+}
+
+
+def main():
+    argv = sys.argv[1:]
+    if not argv:
+        cmd_status([])
+        return
+    command = COMMANDS.get(argv[0])
+    if command is None:
+        die(f"未知命令：{argv[0]}", "跑 `routebar help` 看全部命令。")
+    try:
+        command(argv[1:])
+    except KeyboardInterrupt:
+        print()
+        sys.exit(130)
+
+
+if __name__ == "__main__":
+    main()
