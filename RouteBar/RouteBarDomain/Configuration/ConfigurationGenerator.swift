@@ -11,6 +11,18 @@ public struct GeneratedConfiguration: Sendable {
         self.singBoxJSON = singBoxJSON
         self.surgeProxySection = surgeProxySection
     }
+
+    /// 供 Surge `policy-path=` 拉取的策略列表。
+    ///
+    /// 与 `[Proxy]` 段的唯一区别就是**没有段头**——这一点是照着 sub.store 实际返回的内容
+    /// 确认的：外部策略集就是一串裸的 `名称 = 协议, 主机, 端口, …`，带上段头 Surge 反而解析不了。
+    public nonisolated var surgePolicyList: String {
+        surgeProxySection
+            .components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("[") }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
+    }
 }
 
 /// 把启用节点编译成「一节点一本地端口」的 sing-box 配置，并给出对应的 Surge 代理段。

@@ -1,5 +1,32 @@
 # Changelog
 
+## v1.3.0
+
+Surge 的接入方式从「改写它的配置文件」变成「给它一个订阅地址」，两种方式并存可选。
+
+### 本地订阅地址
+
+- 新增 `LocalSubscriptionServer`：`NWListener` 绑 `127.0.0.1`，只响应
+  `GET /<token>/proxies`，其余一律 404。用 `requiredLocalEndpoint` 而非监听全部接口，
+  局域网内访问不到——这份列表暴露的是本机全部出口。
+- 输出的是裸策略行，**不带 `[Proxy]` 段头**。格式对照实际的 sub.store `policy-path`
+  响应确认过，Surge 侧写法与外部订阅完全一致。
+- 端口占用（errorCode 48）单独报「端口已被占用」，否则用户只会看到一个数字。
+
+### 输出方式成为设置项
+
+- `SurgeOutputMode`：写入 Surge 配置 / 本地订阅地址 / 两者都要。
+- 选订阅时 `install` 不再触碰 Surge 配置文件——`[Proxy]` 是整段替换的，
+  不写它才能和 sub.store 之类的外部订阅共存。
+- 「服务」页新增卡片：服务状态、完整地址、可直接复制的 `policy-path` 示例。
+
+### 修复
+
+- **`subscriptionToken` 未持久化**，每次启动都会重新生成，用户填进 Surge 的地址
+  次日即 404。协调器初始化时补齐的字段现在会写回磁盘。
+- `RouteBarSettings` 改为逐字段 `decodeIfPresent`。合成的 Codable 遇到缺失键整体抛错，
+  而 `loadSettings` 的策略是解不出就回落默认值——升级一次就会悄悄冲掉用户已有的路径设置。
+
 ## v1.2.0
 
 让 RouteBar 能装在别人机器上。此前它检测得出 LaunchAgent 缺失，却不提供任何解法——

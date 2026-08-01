@@ -54,6 +54,54 @@ struct SettingsLandingView: View {
                     }
                 }
 
+                settingsSection("输出到 Surge") {
+                    settingsRow(
+                        title: "方式",
+                        detail: outputModeDetail,
+                        detailColor: model.settings.surgeOutputMode == .profile ? .secondary : .primary
+                    ) {
+                        Picker("方式", selection: Binding(
+                            get: { model.settings.surgeOutputMode },
+                            set: { mode in
+                                var updated = model.settings
+                                updated.surgeOutputMode = mode
+                                model.saveSettings(updated)
+                            }
+                        )) {
+                            ForEach(SurgeOutputMode.allCases) { Text($0.label).tag($0) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 150)
+                    }
+                    if model.settings.surgeOutputMode.servesSubscription {
+                        Divider()
+                        settingsRow(
+                            title: "订阅端口",
+                            detail: "本地订阅服务监听 127.0.0.1 的这个端口。改动会立即重启服务。"
+                        ) {
+                            TextField("", value: Binding(
+                                get: { model.settings.subscriptionPort },
+                                set: { port in
+                                    guard (1024...65535).contains(port) else { return }
+                                    var updated = model.settings
+                                    updated.subscriptionPort = port
+                                    model.saveSettings(updated)
+                                }
+                            ), format: .number.grouping(.never))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 90)
+                        }
+                        Divider()
+                        settingsRow(
+                            title: "订阅地址",
+                            detail: "填进 Surge 策略组的 policy-path=。完整地址与用法见「服务」页。"
+                        ) {
+                            Button("复制") { model.copyText(model.subscriptionURL) }
+                                .controlSize(.small)
+                        }
+                    }
+                }
+
                 settingsSection("测速") {
                     settingsRow(
                         title: "测试端点",
@@ -222,6 +270,18 @@ struct SettingsLandingView: View {
     private func applyCustomEndpoint() {
         guard customEndpointIsValid else { return }
         latencyTestURL = customEndpoint.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// 两种方式的代价不一样，得说清楚再让用户选。
+    private var outputModeDetail: String {
+        switch model.settings.surgeOutputMode {
+        case .profile:
+            "直接改写托管配置的 [Proxy] 段。注意该段是整段替换的——里面除 RouteBar 之外的代理会在下次生成时消失。"
+        case .subscription:
+            "起一个本地 HTTP 服务，由 Surge 用 policy-path= 拉取，完全不碰配置文件，可与 sub.store 等外部订阅共存。只在 RouteBar 运行时可用。"
+        case .both:
+            "同时写入配置并提供订阅地址。两边会出现同名代理，除非你明确需要，一般选其中一种即可。"
+        }
     }
 
     private var nextUpdateText: String {

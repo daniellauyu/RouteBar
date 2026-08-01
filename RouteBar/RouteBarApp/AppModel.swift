@@ -320,6 +320,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - 本地订阅
+
+    @Published private(set) var subscriptionServing = false
+    @Published private(set) var subscriptionError: String?
+
+    var subscriptionURL: String { settings.subscriptionURL }
+
+    func refreshSubscriptionStatus() async {
+        let status = await coordinator.subscriptionStatus()
+        subscriptionServing = status.isRunning
+        subscriptionError = status.error
+    }
+
     // MARK: - LaunchAgent
 
     func launchAgentState() async -> LaunchAgentState {

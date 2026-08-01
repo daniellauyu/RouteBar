@@ -13,6 +13,15 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
     public var surgeProfilePath: String
     public var launchAgentPath: String
     public var launchAgentLabel: String
+    /// 节点交给 Surge 的方式，见 `SurgeOutputMode`。
+    public var surgeOutputMode: SurgeOutputMode
+    /// 本地订阅服务监听的端口。默认避开 sing-box 用的 7701 起的连续段。
+    public var subscriptionPort: Int
+    /// 订阅地址里的随机路径段。
+    ///
+    /// 内容本身不含凭据（只有 `socks5, 127.0.0.1, <端口>`），但一个不可猜的路径能挡住
+    /// 本机其它程序顺手扫端口扫出来，代价只有几行。首次需要时生成并存下来，保持地址稳定。
+    public var subscriptionToken: String
 
     public nonisolated init(singBoxBinaryPath: String,
                             singBoxConfigPath: String,
@@ -20,7 +29,10 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
                             singBoxErrorLogPath: String,
                             surgeProfilePath: String,
                             launchAgentPath: String,
-                            launchAgentLabel: String) {
+                            launchAgentLabel: String,
+                            surgeOutputMode: SurgeOutputMode = .profile,
+                            subscriptionPort: Int = 7899,
+                            subscriptionToken: String = RouteBarSettings.makeToken()) {
         self.singBoxBinaryPath = singBoxBinaryPath
         self.singBoxConfigPath = singBoxConfigPath
         self.singBoxLogPath = singBoxLogPath
@@ -28,6 +40,46 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
         self.surgeProfilePath = surgeProfilePath
         self.launchAgentPath = launchAgentPath
         self.launchAgentLabel = launchAgentLabel
+        self.surgeOutputMode = surgeOutputMode
+        self.subscriptionPort = subscriptionPort
+        self.subscriptionToken = subscriptionToken
+    }
+
+    public nonisolated static func makeToken() -> String {
+        (0..<16).map { _ in String(format: "%x", Int.random(in: 0..<16)) }.joined()
+    }
+
+    /// 本地订阅地址，直接填进 Surge 策略组的 `policy-path=`。
+    public nonisolated var subscriptionURL: String {
+        "http://127.0.0.1:\(subscriptionPort)/\(subscriptionToken)/proxies"
+    }
+
+    // MARK: - 向后兼容的解码
+    //
+    // 新增字段必须逐个 decodeIfPresent。合成的 Codable 遇到缺失键会整体抛错，而
+    // `StateStore.loadSettings` 的写法是「解不出来就回落到默认值」——那样升级一次
+    // 就会把用户配好的路径（包括首次启动接管到的 Label）悄悄冲掉。
+
+    private enum CodingKeys: String, CodingKey {
+        case singBoxBinaryPath, singBoxConfigPath, singBoxLogPath, singBoxErrorLogPath
+        case surgeProfilePath, launchAgentPath, launchAgentLabel
+        case surgeOutputMode, subscriptionPort, subscriptionToken
+    }
+
+    public nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let fallback = RouteBarSettings.defaults()
+        singBoxBinaryPath = try container.decode(String.self, forKey: .singBoxBinaryPath)
+        singBoxConfigPath = try container.decode(String.self, forKey: .singBoxConfigPath)
+        singBoxLogPath = try container.decode(String.self, forKey: .singBoxLogPath)
+        singBoxErrorLogPath = try container.decode(String.self, forKey: .singBoxErrorLogPath)
+        surgeProfilePath = try container.decode(String.self, forKey: .surgeProfilePath)
+        launchAgentPath = try container.decode(String.self, forKey: .launchAgentPath)
+        launchAgentLabel = try container.decode(String.self, forKey: .launchAgentLabel)
+        surgeOutputMode = try container.decodeIfPresent(SurgeOutputMode.self, forKey: .surgeOutputMode) ?? .profile
+        subscriptionPort = try container.decodeIfPresent(Int.self, forKey: .subscriptionPort) ?? fallback.subscriptionPort
+        subscriptionToken = try container.decodeIfPresent(String.self, forKey: .subscriptionToken)
+            ?? RouteBarSettings.makeToken()
     }
 
     /// Homebrew 在 Apple Silicon 与 Intel 上的前缀不同，装法也可能是别的包管理器。

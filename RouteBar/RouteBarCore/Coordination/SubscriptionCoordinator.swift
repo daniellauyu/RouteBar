@@ -32,6 +32,7 @@ public actor SubscriptionCoordinator {
     private var serviceState: ServiceState = .stopped
     private var generatedAt: Date?
     /// 首次启动时接管到的既有服务，用于在日志里说明「为什么设置不是默认值」。
+    private let subscriptionServer = LocalSubscriptionServer()
     private let adoptedLaunchAgent: DiscoveredLaunchAgent?
     private var regenerationInProgress = false
     private var regenerationWaiters: [CheckedContinuation<Void, Never>] = []
@@ -57,6 +58,14 @@ public actor SubscriptionCoordinator {
             try? stateStore.saveSettings(loadedSettings)
         }
         adoptedLaunchAgent = adopted
+
+        // 把补齐了新字段的设置写回去。
+        //
+        // 解码时缺失的字段会取默认值，其中 subscriptionToken 是**每次随机生成**的——
+        // 不落盘的话订阅地址每次启动都变，用户填进 Surge 的 policy-path 第二天就失效了。
+        if stateStore.hasStoredSettings {
+            try? stateStore.saveSettings(loadedSettings)
+        }
 
         let loadedState = stateStore.load()
         settings = loadedSettings
@@ -106,6 +115,7 @@ public actor SubscriptionCoordinator {
                                   "已接管现有的 sing-box 服务「\(adopted.label)」，配置与日志路径取自它的 LaunchAgent"))
         }
         serviceState = await runtime.status()
+        await syncSubscriptionServer(payload: nil)
         if subscriptions.isEmpty {
             do {
                 if let imported = try importExistingSubscription() {
@@ -260,17 +270,22 @@ public actor SubscriptionCoordinator {
             }
             try stateStore.saveGenerated(generated)
             generatedAt = .now
-            if runtime.installedConfigurationMatches(generated), !forceRestart {
+            // 订阅内容先更新：即使下面因为配置未变化而跳过安装，本地服务也必须
+            // 拿到当前这一份，否则 Surge 拉到的会是上一轮的旧列表。
+            await syncSubscriptionServer(payload: generated.surgePolicyList)
+            if runtime.installedConfigurationMatches(generated, writesSurgeProfile: settings.surgeOutputMode.writesProfile),
+               !forceRestart {
                 // 不重装也要把服务状态对齐：跳过分支是「什么都不做」，但期间 sing-box
                 // 可能已经被外部停掉或崩了，直接 return 会让界面一直显示旧状态，
                 // 直到下次窗口激活才自我纠正。
                 serviceState = await runtime.status()
                 return [.init(.info, "配置", "配置未变化，已跳过安装与 sing-box 重启")]
             }
-            try await runtime.install(generated)
+            try await runtime.install(generated, writesSurgeProfile: settings.surgeOutputMode.writesProfile)
             serviceState = await runtime.restart()
             var messages: [OutcomeMessage] = [
-                .init(.notice, "配置", "已生成并安装 \(generated.nodes.count) 个节点出口"),
+                .init(.notice, "配置",
+                      "已生成并安装 \(generated.nodes.count) 个节点出口（\(settings.surgeOutputMode.label)）"),
             ]
             switch serviceState {
             case .running:
@@ -285,6 +300,29 @@ public actor SubscriptionCoordinator {
             CoreLog.configuration.error("生成失败：\(error.localizedDescription, privacy: .public)")
             return [.init(.error, "配置", "配置生成失败：\(error.localizedDescription)")]
         }
+    }
+
+    // MARK: - 本地订阅服务
+
+    /// 按当前设置启动 / 停止本地订阅服务，并把最新内容交给它。
+    private func syncSubscriptionServer(payload: String?) async {
+        guard settings.surgeOutputMode.servesSubscription else {
+            await subscriptionServer.stop()
+            return
+        }
+        let body = payload ?? currentPolicyList()
+        await subscriptionServer.start(port: settings.subscriptionPort,
+                                       token: settings.subscriptionToken,
+                                       payload: body)
+    }
+
+    private func currentPolicyList() -> String {
+        let merged = NodeCatalog.merge(subscriptions.filter(\.isEnabled).flatMap(\.nodes))
+        return (try? ConfigurationGenerator.generate(nodes: merged).surgePolicyList) ?? ""
+    }
+
+    public func subscriptionStatus() async -> (isRunning: Bool, url: String, error: String?) {
+        (await subscriptionServer.isRunning, settings.subscriptionURL, await subscriptionServer.lastError)
     }
 
     private func acquireRegenerationSlot() async {
@@ -373,6 +411,9 @@ public actor SubscriptionCoordinator {
             settings = newSettings
             runtime = RuntimeManager(settings: newSettings)
             serviceState = await runtime.status()
+            // 端口、令牌或输出方式可能都变了，让服务按新设置重来一遍。
+            await subscriptionServer.stop()
+            await syncSubscriptionServer(payload: nil)
             return outcome([.init(.notice, "设置", "环境路径已更新")])
         } catch {
             return outcome([.init(.error, "设置", "保存设置失败：\(error.localizedDescription)")])

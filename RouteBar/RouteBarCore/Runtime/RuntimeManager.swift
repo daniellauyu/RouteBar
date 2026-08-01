@@ -43,7 +43,8 @@ public struct RuntimeManager: Sendable {
     /// 顺序很关键——直接写正式配置再重启，配置有问题时服务会起不来，而旧配置已经没了，
     /// 代理直接全断。所以先写到 `routebar-next.json` 跑 `sing-box check`，
     /// 校验失败就原地抛错，正式配置一个字节都没动。
-    public nonisolated func install(_ generated: GeneratedConfiguration) async throws {
+    public nonisolated func install(_ generated: GeneratedConfiguration,
+                                    writesSurgeProfile: Bool = true) async throws {
         let candidate = paths.singBoxConfigDirectory.appendingPathComponent("routebar-next.json")
         try FileManager.default.createDirectory(at: paths.singBoxConfigDirectory, withIntermediateDirectories: true)
         try generated.singBoxJSON.write(to: candidate, options: .atomic)
@@ -54,6 +55,13 @@ public struct RuntimeManager: Sendable {
 
         try backup(paths.singBoxConfig)
         try generated.singBoxJSON.write(to: paths.singBoxConfig, options: .atomic)
+
+        // 只输出本地订阅地址时不碰 Surge 配置——那正是这个模式的意义所在：
+        // `[Proxy]` 段是整段替换的，不写它才能和 sub.store 之类的外部订阅共存。
+        guard writesSurgeProfile else {
+            CoreLog.configuration.notice("已安装 sing-box 配置：\(generated.nodes.count) 个节点（Surge 走本地订阅）")
+            return
+        }
 
         let surgeURL = paths.surgeProfile
         guard FileManager.default.fileExists(atPath: surgeURL.path) else {
@@ -66,11 +74,13 @@ public struct RuntimeManager: Sendable {
         CoreLog.configuration.notice("已安装配置：\(generated.nodes.count) 个节点")
     }
 
-    /// sing-box JSON 与 Surge 托管段都已经是目标内容时，不再校验、覆盖或重启。
-    public nonisolated func installedConfigurationMatches(_ generated: GeneratedConfiguration) -> Bool {
+    /// sing-box JSON 与（需要时）Surge 托管段都已经是目标内容时，不再校验、覆盖或重启。
+    public nonisolated func installedConfigurationMatches(_ generated: GeneratedConfiguration,
+                                                          writesSurgeProfile: Bool = true) -> Bool {
         guard let installedJSON = try? Data(contentsOf: paths.singBoxConfig),
-              installedJSON == generated.singBoxJSON,
-              let profile = try? String(contentsOf: paths.surgeProfile, encoding: .utf8),
+              installedJSON == generated.singBoxJSON else { return false }
+        guard writesSurgeProfile else { return true }
+        guard let profile = try? String(contentsOf: paths.surgeProfile, encoding: .utf8),
               let updatedProfile = try? SurgeProfileUpdater.update(profile, with: generated) else {
             return false
         }

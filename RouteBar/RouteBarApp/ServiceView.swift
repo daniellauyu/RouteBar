@@ -30,13 +30,17 @@ struct ServiceView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     statusCard
+                    subscriptionCard
                     filesCard
                     logCard
                 }
                 .padding(20)
             }
         }
-        .task { await model.refreshLogs() }
+        .task {
+            await model.refreshLogs()
+            await model.refreshSubscriptionStatus()
+        }
     }
 
     private var statusCard: some View {
@@ -63,6 +67,50 @@ struct ServiceView: View {
                     Text("\(model.enabledNodeCount)").font(.title.weight(.semibold)).monospacedDigit()
                     Text("个本地出口").font(.caption).foregroundStyle(.secondary)
                 }
+            }
+        }
+    }
+
+    /// 本地订阅地址。只在启用了该输出方式时出现。
+    @ViewBuilder
+    private var subscriptionCard: some View {
+        if model.settings.surgeOutputMode.servesSubscription {
+            InfoCard("本地订阅地址") {
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(model.subscriptionServing ? Color.green : Color.orange)
+                        .frame(width: 8, height: 8)
+                    Text(model.subscriptionServing ? "服务中" : (model.subscriptionError ?? "未启动"))
+                        .font(.callout)
+                        .foregroundStyle(model.subscriptionServing ? Color.primary : Color.orange)
+                    Spacer()
+                    Button("复制地址", systemImage: "doc.on.doc") {
+                        model.copyText(model.subscriptionURL)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                Divider()
+                Text(model.subscriptionURL)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8)
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("在 Surge 策略组里这样用（和你接 sub.store 是同一个机制）：")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("🔰 RouteBar = select, policy-path=\(model.subscriptionURL), update-interval=0")
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text("只在 RouteBar 运行时可访问。Surge 会缓存上一次拉到的列表，所以 RouteBar 没开时不会立刻断，但也拿不到新节点。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 8)
             }
         }
     }
