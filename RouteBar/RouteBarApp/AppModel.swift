@@ -39,6 +39,7 @@ final class AppModel: ObservableObject {
     func bootstrap() async {
         apply(await coordinator.bootstrap())
         runtimePathsCache = await coordinator.paths
+        await syncServer()
         await refreshLogs()
         startScheduler()
         // 首次启动时不能只依赖调度器：它 30 秒后才第一次检查，而刚添加过订阅
@@ -162,34 +163,53 @@ final class AppModel: ObservableObject {
     func saveSubscription(id: UUID?, name: String, url: String, note: String, interval: Int) {
         Task {
             do {
-                let savedID = try await coordinator.saveSubscription(id: id, name: name, url: url,
-                                                                     note: note, interval: interval)
-                selectedSubscriptionID = savedID
-                log.notice("订阅", "已保存订阅「\(name)」")
-                await runUpdates([savedID], regenerateAfter: true, initiatedByUser: true)
+                try await saveSubscriptionAsync(id: id, name: name, url: url, note: note, interval: interval)
             } catch {
                 alertMessage = error.localizedDescription
-                log.error("订阅", "保存订阅失败：\(error.localizedDescription)")
             }
         }
     }
 
+    func saveSubscriptionAsync(id: UUID?, name: String, url: String, note: String, interval: Int) async throws {
+        do {
+            let savedID = try await coordinator.saveSubscription(id: id, name: name, url: url,
+                                                                 note: note, interval: interval)
+            selectedSubscriptionID = savedID
+            log.notice("订阅", "已保存订阅「\(name)」")
+            await runUpdates([savedID], regenerateAfter: true, initiatedByUser: true)
+        } catch {
+            log.error("订阅", "保存订阅失败：\(error.localizedDescription)")
+            throw error
+        }
+    }
+
     func delete(_ subscription: SubscriptionRecord) {
-        Task { apply(await coordinator.delete(subscription.id), alertOnError: true) }
+        Task { await deleteSubscription(subscription.id) }
     }
 
     func setSubscriptionEnabled(_ enabled: Bool, for id: UUID) {
-        Task {
-            apply(await coordinator.setSubscriptionEnabled(enabled, for: id), alertOnError: true)
-            scheduleRegeneration()
-        }
+        Task { await applySubscriptionEnabled(enabled, id: id) }
     }
 
     func setNodeEnabled(_ enabled: Bool, id: String) {
-        Task {
-            apply(await coordinator.setNodeEnabled(enabled, id: id), alertOnError: true)
-            scheduleRegeneration()
-        }
+        Task { await applyNodeEnabled(enabled, id: id) }
+    }
+
+    // 可等待的版本。SwiftUI 的按钮不关心什么时候结束（上面那几个包一层 Task 就够），
+    // 但 HTTP 请求必须等动作真正完成才能把新快照写进响应体，否则网页拿到的是改动前的状态。
+
+    func deleteSubscription(_ id: UUID) async {
+        apply(await coordinator.delete(id), alertOnError: true)
+    }
+
+    func applySubscriptionEnabled(_ enabled: Bool, id: UUID) async {
+        apply(await coordinator.setSubscriptionEnabled(enabled, for: id), alertOnError: true)
+        scheduleRegeneration()
+    }
+
+    func applyNodeEnabled(_ enabled: Bool, id: String) async {
+        apply(await coordinator.setNodeEnabled(enabled, id: id), alertOnError: true)
+        scheduleRegeneration()
     }
 
     /// 连续开关节点/订阅时只在最后一次改动后重装一次配置。
@@ -245,7 +265,11 @@ final class AppModel: ObservableObject {
     }
 
     func toggleAutoUpdate() {
-        Task { apply(await coordinator.setAutoUpdatePaused(!autoUpdatePaused)) }
+        Task { await setAutoUpdatePaused(!autoUpdatePaused) }
+    }
+
+    func setAutoUpdatePaused(_ paused: Bool) async {
+        apply(await coordinator.setAutoUpdatePaused(paused))
     }
 
     // MARK: - 测速
@@ -288,20 +312,27 @@ final class AppModel: ObservableObject {
 
     // MARK: - 服务
 
-    func restartService() {
-        Task { apply(await coordinator.restartService(), alertOnError: true); await refreshLogs() }
+    func restartService() { Task { await startServiceAsync() } }
+    func stopService() { Task { await stopServiceAsync() } }
+    func refreshService() { Task { await refreshServiceAsync() } }
+    func regenerate() { Task { await regenerateAsync() } }
+
+    func startServiceAsync() async {
+        apply(await coordinator.restartService(), alertOnError: true)
+        await refreshLogs()
     }
 
-    func stopService() {
-        Task { apply(await coordinator.stopService(), alertOnError: true) }
+    func stopServiceAsync() async {
+        apply(await coordinator.stopService(), alertOnError: true)
     }
 
-    func refreshService() {
-        Task { apply(await coordinator.refreshServiceState(), alertOnError: true); await refreshLogs() }
+    func refreshServiceAsync() async {
+        apply(await coordinator.refreshServiceState(), alertOnError: true)
+        await refreshLogs()
     }
 
-    func regenerate() {
-        Task { apply(await coordinator.regenerate(forceRestart: true), alertOnError: true) }
+    func regenerateAsync() async {
+        apply(await coordinator.regenerate(forceRestart: true), alertOnError: true)
     }
 
     func refreshLogs() async {
@@ -316,21 +347,48 @@ final class AppModel: ObservableObject {
         Task {
             apply(await coordinator.saveSettings(newSettings), alertOnError: true)
             runtimePathsCache = await coordinator.paths
+            // 端口、令牌或输出方式可能都变了，让服务按新设置重来一遍。
+            await server.stop()
+            await syncServer()
             await refreshLogs()
         }
     }
 
-    // MARK: - 本地订阅
+    // MARK: - 本地服务（订阅地址 + Web 界面）
 
     @Published private(set) var subscriptionServing = false
     @Published private(set) var subscriptionError: String?
 
     var subscriptionURL: String { settings.subscriptionURL }
+    var webInterfaceURL: String { settings.webInterfaceURL }
 
+    /// 服务器挂在 AppModel 而不是引擎上。
+    ///
+    /// 因为路由要调的是 AppModel 的动词（防抖重装、更新进度、测速端点），挂在引擎上就成了
+    /// 引擎 → 服务器 → 路由 → 引擎的环。放在这里，依赖是单向的：AppModel → 服务器、
+    /// AppModel → 引擎。
+    private let server = LocalHTTPServer()
+
+    func syncServer() async {
+        let settings = self.settings
+        guard settings.surgeOutputMode.servesSubscription else {
+            await server.stop()
+            subscriptionServing = false
+            subscriptionError = nil
+            return
+        }
+        let router = APIRouter(token: settings.subscriptionToken,
+                               port: settings.subscriptionPort,
+                               host: self)
+        await server.start(port: settings.subscriptionPort, handler: router.handler())
+        await refreshSubscriptionStatus()
+    }
+
+    /// 监听要等 `NWListener` 进入 `.ready` 才算数，`start` 返回时通常还没到，
+    /// 所以状态得单独取一次而不能拿 `start` 的返回值。
     func refreshSubscriptionStatus() async {
-        let status = await coordinator.subscriptionStatus()
-        subscriptionServing = status.isRunning
-        subscriptionError = status.error
+        subscriptionServing = await server.isRunning
+        subscriptionError = await server.lastError
     }
 
     // MARK: - LaunchAgent
@@ -387,6 +445,16 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// 在默认浏览器里打开 Web 界面。
+    func openWebInterface() {
+        guard settings.surgeOutputMode.servesSubscription else {
+            alertMessage = "Web 界面依赖本地服务，请先在「通用 → 输出到 Surge」里选择包含订阅地址的方式。"
+            return
+        }
+        guard let url = URL(string: webInterfaceURL) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     func copyText(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
@@ -402,5 +470,87 @@ final class AppModel: ObservableObject {
     func selectNode(_ id: String) {
         selectedNodeID = id
         selectedSection = .nodes
+    }
+}
+
+// MARK: - Web API
+
+/// 每一项都直接转调上面已有的方法——**这里没有一行业务逻辑**。
+///
+/// 这正是整个 API 层的设计前提：网页和窗口驱动的是同一组动词，所以节点防抖重装、
+/// 更新进度、测速用哪个端点这些行为在两个前端上必然一致。若让路由直连引擎，
+/// 网页上的操作会绕过这些包装，行为悄悄分叉，而这种差异极难在测试里发现。
+extension AppModel: RouteBarAPIHost {
+    func apiSnapshot() async -> APISnapshot {
+        // 服务器可能在窗口没打开时被访问，顺手刷新一次监听状态。
+        await refreshSubscriptionStatus()
+        let current = state ?? AppViewState(subscriptions: [], serviceState: .stopped,
+                                            environment: RouteBarEnvironmentReport(paths: runtimePaths) { _ in false },
+                                            settings: settings, autoUpdatePaused: false)
+        return APISnapshot(state: current,
+                           subscriptionServing: subscriptionServing,
+                           subscriptionError: subscriptionError)
+    }
+
+    /// Surge 要拉的策略集。
+    ///
+    /// 按请求现算，不缓存字符串：缓存的那一份会在「配置未变化、跳过安装」这条分支上
+    /// 停留在上一轮的内容。快照里的端口映射与即将写进 sing-box 的编号同源，现算永远对得上。
+    func apiPolicyList() async -> String {
+        ConfigurationGenerator.surgePolicyLines(mappedNodes)
+    }
+
+    func apiSaveSubscription(_ input: APISubscriptionInput) async throws {
+        let existingID = input.id.flatMap(UUID.init(uuidString:))
+        let existing = existingID.flatMap { id in subscriptions.first { $0.id == id } }
+        // 编辑时地址留空表示「保持原样」——网页不显示已存的地址（它含机场凭据，
+        // 只在钥匙串里），所以不能把空串当成「清空地址」。
+        var url = input.url?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if url.isEmpty {
+            guard let existingID else { throw APIInputError.missingURL }
+            url = await coordinator.subscriptionURL(for: existingID)
+            guard !url.isEmpty else { throw APIInputError.missingURL }
+        }
+        guard let parsed = URL(string: url), parsed.scheme == "http" || parsed.scheme == "https" else {
+            throw APIInputError.invalidURL
+        }
+        try await saveSubscriptionAsync(id: existingID,
+                                        name: input.name.trimmingCharacters(in: .whitespaces),
+                                        url: url,
+                                        note: input.note ?? existing?.note ?? "",
+                                        interval: input.intervalHours ?? existing?.updateIntervalHours ?? 6)
+    }
+
+    func apiDeleteSubscription(_ id: UUID) async { await deleteSubscription(id) }
+    func apiSetSubscriptionEnabled(_ enabled: Bool, id: UUID) async { await applySubscriptionEnabled(enabled, id: id) }
+    func apiUpdateSubscription(_ id: UUID) async { await update(id) }
+    func apiUpdateAll() async { await updateAll() }
+    func apiSetNodeEnabled(_ enabled: Bool, id: String) async { await applyNodeEnabled(enabled, id: id) }
+    func apiTestNode(_ id: String) async { await testNode(id) }
+    func apiTestAllNodes() async { await testAllNodes() }
+    func apiRegenerate() async { await regenerateAsync() }
+    func apiStartService() async { await startServiceAsync() }
+    func apiStopService() async { await stopServiceAsync() }
+    func apiRefreshService() async { await refreshServiceAsync() }
+    func apiSetAutoUpdatePaused(_ paused: Bool) async { await setAutoUpdatePaused(paused) }
+
+    func apiLogs() async -> APILogs {
+        await refreshLogs()
+        let recent = Array(log.entries.suffix(200))
+        return APILogs(singBoxStandard: singBoxLogText,
+                       singBoxError: singBoxErrorLogText,
+                       runtime: recent.isEmpty ? [] : log.exportText(recent).components(separatedBy: "\n"))
+    }
+
+    enum APIInputError: LocalizedError {
+        case missingURL
+        case invalidURL
+
+        var errorDescription: String? {
+            switch self {
+            case .missingURL: "缺少订阅地址"
+            case .invalidURL: "订阅地址必须是 http 或 https 链接"
+            }
+        }
     }
 }

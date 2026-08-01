@@ -32,7 +32,6 @@ public actor SubscriptionCoordinator {
     private var serviceState: ServiceState = .stopped
     private var generatedAt: Date?
     /// 首次启动时接管到的既有服务，用于在日志里说明「为什么设置不是默认值」。
-    private let subscriptionServer = LocalSubscriptionServer()
     private let adoptedLaunchAgent: DiscoveredLaunchAgent?
     private var regenerationInProgress = false
     private var regenerationWaiters: [CheckedContinuation<Void, Never>] = []
@@ -115,7 +114,6 @@ public actor SubscriptionCoordinator {
                                   "已接管现有的 sing-box 服务「\(adopted.label)」，配置与日志路径取自它的 LaunchAgent"))
         }
         serviceState = await runtime.status()
-        await syncSubscriptionServer(payload: nil)
         if subscriptions.isEmpty {
             do {
                 if let imported = try importExistingSubscription() {
@@ -270,9 +268,6 @@ public actor SubscriptionCoordinator {
             }
             try stateStore.saveGenerated(generated)
             generatedAt = .now
-            // 订阅内容先更新：即使下面因为配置未变化而跳过安装，本地服务也必须
-            // 拿到当前这一份，否则 Surge 拉到的会是上一轮的旧列表。
-            await syncSubscriptionServer(payload: generated.surgePolicyList)
             if runtime.installedConfigurationMatches(generated, writesSurgeProfile: settings.surgeOutputMode.writesProfile),
                !forceRestart {
                 // 不重装也要把服务状态对齐：跳过分支是「什么都不做」，但期间 sing-box
@@ -300,29 +295,6 @@ public actor SubscriptionCoordinator {
             CoreLog.configuration.error("生成失败：\(error.localizedDescription, privacy: .public)")
             return [.init(.error, "配置", "配置生成失败：\(error.localizedDescription)")]
         }
-    }
-
-    // MARK: - 本地订阅服务
-
-    /// 按当前设置启动 / 停止本地订阅服务，并把最新内容交给它。
-    private func syncSubscriptionServer(payload: String?) async {
-        guard settings.surgeOutputMode.servesSubscription else {
-            await subscriptionServer.stop()
-            return
-        }
-        let body = payload ?? currentPolicyList()
-        await subscriptionServer.start(port: settings.subscriptionPort,
-                                       token: settings.subscriptionToken,
-                                       payload: body)
-    }
-
-    private func currentPolicyList() -> String {
-        let merged = NodeCatalog.merge(subscriptions.filter(\.isEnabled).flatMap(\.nodes))
-        return (try? ConfigurationGenerator.generate(nodes: merged).surgePolicyList) ?? ""
-    }
-
-    public func subscriptionStatus() async -> (isRunning: Bool, url: String, error: String?) {
-        (await subscriptionServer.isRunning, settings.subscriptionURL, await subscriptionServer.lastError)
     }
 
     private func acquireRegenerationSlot() async {
@@ -411,9 +383,6 @@ public actor SubscriptionCoordinator {
             settings = newSettings
             runtime = RuntimeManager(settings: newSettings)
             serviceState = await runtime.status()
-            // 端口、令牌或输出方式可能都变了，让服务按新设置重来一遍。
-            await subscriptionServer.stop()
-            await syncSubscriptionServer(payload: nil)
             return outcome([.init(.notice, "设置", "环境路径已更新")])
         } catch {
             return outcome([.init(.error, "设置", "保存设置失败：\(error.localizedDescription)")])

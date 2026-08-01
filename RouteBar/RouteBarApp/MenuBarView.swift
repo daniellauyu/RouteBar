@@ -33,6 +33,9 @@ struct MenuBarView: View {
             Divider()
 
             row("打开 RouteBar", symbol: "macwindow") { open(.overview) }
+            if model.settings.surgeOutputMode.servesSubscription {
+                row("打开 Web 界面", symbol: "safari") { model.openWebInterface() }
+            }
             row("查看错误日志", symbol: "doc.text") { open(.service) }
             row("退出 RouteBar", symbol: "power") { NSApplication.shared.terminate(nil) }
         }

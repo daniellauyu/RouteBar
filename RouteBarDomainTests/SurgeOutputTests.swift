@@ -25,6 +25,29 @@ import Testing
         for line in lines { #expect(generated.surgeProxySection.contains(line)) }
     }
 
+    /// 订阅地址返回的列表和写进配置文件的 `[Proxy]` 段必须逐字节同源。
+    ///
+    /// 两边各拼一遍的话，`.both` 模式下 Surge 会看到两套名字或端口不同的同一批节点，
+    /// 而这种错位只有逐行比对才看得出来。
+    @Test func policyLinesAreTheSingleSourceForBothOutputs() throws {
+        let nodes = [node("a"), node("b"), node("c")]
+        let generated = try ConfigurationGenerator.generate(nodes: nodes)
+        let standalone = ConfigurationGenerator.surgePolicyLines(generated.nodes)
+
+        #expect(standalone == generated.surgePolicyList)
+        #expect(generated.surgeProxySection == "[Proxy]\n" + standalone)
+    }
+
+    /// 本地服务是按请求现算策略行的，用的是快照里的端口映射。
+    /// 那份映射必须和真正写进 sing-box 的编号一致，否则 Surge 会连到不存在的端口。
+    @Test func policyLinesFromPortMappingMatchFullGeneration() throws {
+        let nodes = [node("a"), node("b"), node("c")]
+        let fromMapping = ConfigurationGenerator.surgePolicyLines(
+            ConfigurationGenerator.portMapping(nodes: nodes))
+
+        #expect(fromMapping == (try ConfigurationGenerator.generate(nodes: nodes)).surgePolicyList)
+    }
+
     @Test func outputModeControlsWhichSideIsWritten() {
         #expect(SurgeOutputMode.profile.writesProfile)
         #expect(!SurgeOutputMode.profile.servesSubscription)

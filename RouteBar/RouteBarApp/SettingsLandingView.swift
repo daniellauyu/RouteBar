@@ -99,6 +99,17 @@ struct SettingsLandingView: View {
                             Button("复制") { model.copyText(model.subscriptionURL) }
                                 .controlSize(.small)
                         }
+                        Divider()
+                        settingsRow(
+                            title: "Web 界面",
+                            detail: "同端口同令牌的浏览器界面，可在终端里用 open 直接打开，不必切到这个窗口。"
+                        ) {
+                            HStack(spacing: 6) {
+                                Button("复制") { model.copyText(model.webInterfaceURL) }
+                                Button("打开") { model.openWebInterface() }
+                            }
+                            .controlSize(.small)
+                        }
                     }
                 }
 

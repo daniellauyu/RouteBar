@@ -51,7 +51,16 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
 
     /// 本地订阅地址，直接填进 Surge 策略组的 `policy-path=`。
     public nonisolated var subscriptionURL: String {
-        "http://127.0.0.1:\(subscriptionPort)/\(subscriptionToken)/proxies"
+        "\(localBaseURL)/proxies"
+    }
+
+    /// Web 界面地址。与订阅地址同端口同令牌——两者是同一个信任域，能访问其一就能访问其二。
+    public nonisolated var webInterfaceURL: String {
+        "\(localBaseURL)/"
+    }
+
+    private nonisolated var localBaseURL: String {
+        "http://127.0.0.1:\(subscriptionPort)/\(subscriptionToken)"
     }
 
     // MARK: - 向后兼容的解码

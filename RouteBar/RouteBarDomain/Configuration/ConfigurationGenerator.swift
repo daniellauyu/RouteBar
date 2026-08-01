@@ -76,11 +76,19 @@ public enum ConfigurationGenerator {
             "route": ["rules": rules],
         ]
         let json = try JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys])
-        let proxyLines = mapped.enumerated().map { index, item in
-            "\(surgeName(index, item.node.name)) = socks5, 127.0.0.1, \(item.localPort)"
-        }
         return GeneratedConfiguration(nodes: mapped, singBoxJSON: json,
-                                      surgeProxySection: "[Proxy]\n" + proxyLines.joined(separator: "\n") + "\n")
+                                      surgeProxySection: "[Proxy]\n" + surgePolicyLines(mapped))
+    }
+
+    /// 裸策略行（无 `[Proxy]` 段头），本地订阅服务直接返回这一份。
+    ///
+    /// 单独拎出来是为了让「写进配置文件的 `[Proxy]` 段」和「订阅地址返回的列表」同源。
+    /// 各写一遍的话，两种输出方式并用（`.both`）时 Surge 会看到两套名字不同的同一批节点，
+    /// 而这种错位只有逐行比对才看得出来。
+    public nonisolated static func surgePolicyLines(_ mapped: [PortMappedNode]) -> String {
+        mapped.enumerated()
+            .map { "\(surgeName($0.offset, $0.element.node.name)) = socks5, 127.0.0.1, \($0.element.localPort)" }
+            .joined(separator: "\n") + "\n"
     }
 
     private nonisolated static func tag(_ prefix: String, _ index: Int) -> String {

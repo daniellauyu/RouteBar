@@ -75,7 +75,7 @@ struct ServiceView: View {
     @ViewBuilder
     private var subscriptionCard: some View {
         if model.settings.surgeOutputMode.servesSubscription {
-            InfoCard("本地订阅地址") {
+            InfoCard("本地服务") {
                 HStack(spacing: 10) {
                     Circle()
                         .fill(model.subscriptionServing ? Color.green : Color.orange)
@@ -84,6 +84,9 @@ struct ServiceView: View {
                         .font(.callout)
                         .foregroundStyle(model.subscriptionServing ? Color.primary : Color.orange)
                     Spacer()
+                    Button("打开 Web 界面", systemImage: "safari") { model.openWebInterface() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     Button("复制地址", systemImage: "doc.on.doc") {
                         model.copyText(model.subscriptionURL)
                     }
@@ -91,11 +94,24 @@ struct ServiceView: View {
                     .controlSize(.small)
                 }
                 Divider()
-                Text(model.subscriptionURL)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 8)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("订阅地址（给 Surge）")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(model.subscriptionURL)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Web 界面（给浏览器）")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
+                    Text(model.webInterfaceURL)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.vertical, 8)
                 Divider()
                 VStack(alignment: .leading, spacing: 6) {
                     Text("在 Surge 策略组里这样用（和你接 sub.store 是同一个机制）：")
@@ -105,7 +121,7 @@ struct ServiceView: View {
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Text("只在 RouteBar 运行时可访问。Surge 会缓存上一次拉到的列表，所以 RouteBar 没开时不会立刻断，但也拿不到新节点。")
+                    Text("两个地址都只在 RouteBar 运行时可访问，且只绑定 127.0.0.1。Surge 会缓存上一次拉到的列表，所以 RouteBar 没开时不会立刻断，但也拿不到新节点。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
