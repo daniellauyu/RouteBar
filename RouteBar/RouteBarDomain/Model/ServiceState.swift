@@ -6,6 +6,14 @@ public enum ServiceState: Equatable, Sendable {
     case stopped
     case failed(String)
 
+    public nonisolated static func == (lhs: ServiceState, rhs: ServiceState) -> Bool {
+        switch (lhs, rhs) {
+        case (.running, .running), (.stopped, .stopped): true
+        case (.failed(let lhsReason), .failed(let rhsReason)): lhsReason == rhsReason
+        default: false
+        }
+    }
+
     public nonisolated var label: String {
         switch self {
         case .running: "运行中"

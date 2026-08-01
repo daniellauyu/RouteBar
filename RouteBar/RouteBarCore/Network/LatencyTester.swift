@@ -42,10 +42,10 @@ public struct LatencyTester: Sendable {
         }
     }
 
-    /// 连测 `samples` 次取最好的一次。
+    /// 成功时继续采样并取最好的一次；第一次失败就停止。
     ///
-    /// 中途一旦成功过就不再看失败：偶发的连接重置不代表节点不可用，但反过来，
-    /// 全部失败时要保留最后一次的失败原因（超时 / 连接失败）给界面显示。
+    /// 对成功节点多采几次可以滤掉链路抖动。失败尤其是超时则通常说明节点已经不可用，
+    /// 继续做满三次只会让一个死节点把整批测速从 8 秒拖到 24 秒。
     public nonisolated func test(_ mapped: PortMappedNode) async -> (String, LatencyRecord) {
         var best: LatencyRecord?
         for _ in 0..<samples {
@@ -54,8 +54,10 @@ public struct LatencyTester: Sendable {
                 if best?.outcome != .success || milliseconds < (best?.milliseconds ?? .max) {
                     best = record
                 }
-            } else if best == nil || best?.outcome != .success {
-                best = record
+            } else {
+                // 已经成功过时保留成功结果；首次即失败时保留具体失败原因。
+                if case nil = best { best = record }
+                break
             }
         }
         return (mapped.node.id, best ?? LatencyRecord(outcome: .connectionFailed, milliseconds: nil))

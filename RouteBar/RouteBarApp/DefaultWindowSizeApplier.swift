@@ -24,6 +24,10 @@ struct DefaultWindowSizeApplier: NSViewRepresentable {
     private func apply(to view: NSView, coordinator: Coordinator) {
         DispatchQueue.main.async {
             guard let window = view.window else { return }
+            // SwiftUI 的单例 Window 关闭后不会像 WindowGroup 那样新建。保留 NSWindow，Dock reopen
+            // 时 AppDelegate 才能把同一个主窗口重新显示出来。
+            window.identifier = RouteBarWindowIdentity.main
+            window.isReleasedWhenClosed = false
             coordinator.observe(window: window, onResize: onResize)
             guard coordinator.appliedDimensions != dimensions else { return }
             coordinator.appliedDimensions = dimensions

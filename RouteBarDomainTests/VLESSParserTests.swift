@@ -68,6 +68,14 @@ struct SchedulingTests {
         #expect(!record.isStale(at: now, maximumAge: 700))
     }
 
+    @Test func classifiesEndToEndLatencyUsingRouteBarThresholds() {
+        #expect(LatencyClassification.band(for: nil) == .untested)
+        #expect(LatencyClassification.band(for: LatencyRecord(outcome: .timeout, milliseconds: nil)) == .failed)
+        #expect(LatencyClassification.band(for: LatencyRecord(outcome: .success, milliseconds: 437)) == .fast)
+        #expect(LatencyClassification.band(for: LatencyRecord(outcome: .success, milliseconds: 800)) == .medium)
+        #expect(LatencyClassification.band(for: LatencyRecord(outcome: .success, milliseconds: 1_428)) == .slow)
+    }
+
     @Test func viewStateCountsEnabledSubscriptionsMergedNodesAndFailures() {
         let source = UUID(uuidString: "00000000-0000-0000-0000-000000000010")!
         let firstNode = ProxyNode(id: "a", name: "A", server: "a.example.com", serverPort: 443,

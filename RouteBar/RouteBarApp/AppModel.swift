@@ -27,6 +27,7 @@ final class AppModel: ObservableObject {
     private let coordinator = SubscriptionCoordinator()
     private let log = RuntimeLog.shared
     private var schedulerTask: Task<Void, Never>?
+    private var regenerationTask: Task<Void, Never>?
     private var runtimePathsCache: RuntimePaths = RuntimePaths()
 
     init() {
@@ -70,19 +71,20 @@ final class AppModel: ObservableObject {
         let due = await coordinator.dueSubscriptionIDs()
         guard !due.isEmpty else { return }
         log.info("更新", "\(due.count) 个订阅到期，开始自动更新")
-        await runUpdates(due, regenerateAfter: true)
+        await runUpdates(due, regenerateAfter: true, initiatedByUser: false)
     }
 
     // MARK: - 状态应用
 
-    /// 把引擎结果转成界面状态：替换快照 + 把消息写进运行日志。
-    private func apply(_ outcome: CoordinatorOutcome) {
+    /// 把引擎结果转成界面状态并写日志。是否弹窗由发起操作的调用点决定，后台任务只记日志。
+    @discardableResult
+    private func apply(_ outcome: CoordinatorOutcome, alertOnError: Bool = false) -> [String] {
         state = outcome.state
         for message in outcome.messages {
             log.log(message.level, message.category, message.text)
-            // 错误级消息同时弹窗，用户不必自己去日志页找原因。
-            if message.level == .error { alertMessage = message.text }
         }
+        let errors = outcome.messages.filter { $0.level == .error }.map(\.text)
+        if alertOnError { presentErrors(errors) }
         if let selectedSubscriptionID,
            !outcome.state.subscriptions.contains(where: { $0.id == selectedSubscriptionID }) {
             self.selectedSubscriptionID = nil
@@ -91,6 +93,12 @@ final class AppModel: ObservableObject {
            !outcome.state.mergedNodes.contains(where: { $0.id == selectedNodeID }) {
             self.selectedNodeID = nil
         }
+        return errors
+    }
+
+    private func presentErrors(_ errors: [String]) {
+        guard !errors.isEmpty else { return }
+        alertMessage = errors.joined(separator: "\n\n")
     }
 
     // MARK: - 派生视图数据
@@ -158,7 +166,7 @@ final class AppModel: ObservableObject {
                                                                      note: note, interval: interval)
                 selectedSubscriptionID = savedID
                 log.notice("订阅", "已保存订阅「\(name)」")
-                await runUpdates([savedID], regenerateAfter: true)
+                await runUpdates([savedID], regenerateAfter: true, initiatedByUser: true)
             } catch {
                 alertMessage = error.localizedDescription
                 log.error("订阅", "保存订阅失败：\(error.localizedDescription)")
@@ -167,45 +175,73 @@ final class AppModel: ObservableObject {
     }
 
     func delete(_ subscription: SubscriptionRecord) {
-        Task { apply(await coordinator.delete(subscription.id)) }
+        Task { apply(await coordinator.delete(subscription.id), alertOnError: true) }
     }
 
     func setSubscriptionEnabled(_ enabled: Bool, for id: UUID) {
-        Task { apply(await coordinator.setSubscriptionEnabled(enabled, for: id)) }
+        Task {
+            apply(await coordinator.setSubscriptionEnabled(enabled, for: id), alertOnError: true)
+            scheduleRegeneration()
+        }
     }
 
     func setNodeEnabled(_ enabled: Bool, id: String) {
-        Task { apply(await coordinator.setNodeEnabled(enabled, id: id)) }
+        Task {
+            apply(await coordinator.setNodeEnabled(enabled, id: id), alertOnError: true)
+            scheduleRegeneration()
+        }
+    }
+
+    /// 连续开关节点/订阅时只在最后一次改动后重装一次配置。
+    private func scheduleRegeneration() {
+        regenerationTask?.cancel()
+        regenerationTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(500))
+            } catch {
+                return
+            }
+            guard let self else { return }
+            apply(await coordinator.regenerate(), alertOnError: true)
+            regenerationTask = nil
+        }
     }
 
     // MARK: - 更新
 
     func updateAll() async {
         guard !isUpdating else { return }
-        await runUpdates(await coordinator.enabledSubscriptionIDs(), regenerateAfter: true)
+        await runUpdates(await coordinator.enabledSubscriptionIDs(), regenerateAfter: true, initiatedByUser: true)
     }
 
     func update(_ id: UUID) async {
         guard !isUpdating else { return }
-        await runUpdates([id], regenerateAfter: true)
+        await runUpdates([id], regenerateAfter: true, initiatedByUser: true)
     }
 
     /// 逐条更新并即时刷新界面：每条完成就应用一次快照，进度条和订阅状态实时可见，
     /// 而不是全部跑完才一次性刷新。
-    private func runUpdates(_ ids: [UUID], regenerateAfter: Bool) async {
-        guard !ids.isEmpty else { return }
+    private func runUpdates(_ ids: [UUID], regenerateAfter: Bool, initiatedByUser: Bool) async {
+        // 外层入口可能在 guard 后跨 actor await；恢复时必须在这里再次原子地抢占更新权。
+        guard !ids.isEmpty, !isUpdating else { return }
+        regenerationTask?.cancel()
+        regenerationTask = nil
         isUpdating = true
         updateProgress = 0
+        defer {
+            isUpdating = false
+            updateProgress = 0
+        }
+        var errors: [String] = []
         for (offset, id) in ids.enumerated() {
-            apply(await coordinator.markUpdating(id))
-            apply(await coordinator.update(id))
+            errors += apply(await coordinator.markUpdating(id))
+            errors += apply(await coordinator.update(id))
             updateProgress = Double(offset + 1) / Double(ids.count)
         }
         if regenerateAfter {
-            apply(await coordinator.regenerate())
+            errors += apply(await coordinator.regenerate())
         }
-        isUpdating = false
-        updateProgress = 0
+        if initiatedByUser { presentErrors(errors) }
     }
 
     func toggleAutoUpdate() {
@@ -246,26 +282,26 @@ final class AppModel: ObservableObject {
         }
         let ids = Set(mapped.map(\.node.id))
         testingNodeIDs.formUnion(ids)
-        apply(await coordinator.testNodes(mapped, testURL: latencyTestURL, samples: latencySamples))
+        apply(await coordinator.testNodes(mapped, testURL: latencyTestURL, samples: latencySamples), alertOnError: true)
         testingNodeIDs.subtract(ids)
     }
 
     // MARK: - 服务
 
     func restartService() {
-        Task { apply(await coordinator.restartService()); await refreshLogs() }
+        Task { apply(await coordinator.restartService(), alertOnError: true); await refreshLogs() }
     }
 
     func stopService() {
-        Task { apply(await coordinator.stopService()) }
+        Task { apply(await coordinator.stopService(), alertOnError: true) }
     }
 
     func refreshService() {
-        Task { apply(await coordinator.refreshServiceState()); await refreshLogs() }
+        Task { apply(await coordinator.refreshServiceState(), alertOnError: true); await refreshLogs() }
     }
 
     func regenerate() {
-        Task { apply(await coordinator.regenerate()) }
+        Task { apply(await coordinator.regenerate(forceRestart: true), alertOnError: true) }
     }
 
     func refreshLogs() async {
@@ -278,14 +314,14 @@ final class AppModel: ObservableObject {
 
     func saveSettings(_ newSettings: RouteBarSettings) {
         Task {
-            apply(await coordinator.saveSettings(newSettings))
+            apply(await coordinator.saveSettings(newSettings), alertOnError: true)
             runtimePathsCache = await coordinator.paths
             await refreshLogs()
         }
     }
 
     func createRequiredDirectories() {
-        Task { apply(await coordinator.createRequiredDirectories()) }
+        Task { apply(await coordinator.createRequiredDirectories(), alertOnError: true) }
     }
 
     func updateWindowDimensions(_ dimensions: WindowDimensions) {

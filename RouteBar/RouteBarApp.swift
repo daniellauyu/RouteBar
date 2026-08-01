@@ -1,6 +1,10 @@
 import AppKit
 import SwiftUI
 
+enum RouteBarWindowIdentity {
+    static let main = NSUserInterfaceItemIdentifier("RouteBar.main")
+}
+
 /// 只负责把 Dock 图标偏好落到激活策略上。
 ///
 /// 进程按 `LSUIElement` 以 `.accessory` 起步（见 `DockIconVisibility`），所以这里做的是
@@ -19,6 +23,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// **Info.plist** 重新登记这个进程，运行时设过的策略被覆盖掉：显示模式下图标会凭空消失。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         DockIconVisibility.applyStoredPreference()
+        if !hasVisibleWindows,
+           let mainWindow = sender.windows.first(where: { $0.identifier == RouteBarWindowIdentity.main }) {
+            mainWindow.makeKeyAndOrderFront(nil)
+            sender.activate(ignoringOtherApps: true)
+        }
         return true
     }
 }

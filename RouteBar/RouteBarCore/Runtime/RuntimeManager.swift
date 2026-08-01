@@ -14,23 +14,23 @@ public struct RuntimeManager: Sendable {
 
     // MARK: - 服务控制
 
-    public nonisolated func status() -> ServiceState {
-        guard let result = try? runner.run("/bin/launchctl", ["print", paths.launchctlTarget]) else {
+    public nonisolated func status() async -> ServiceState {
+        guard let result = try? await runner.run("/bin/launchctl", ["print", paths.launchctlTarget]) else {
             return .stopped
         }
         return LaunchCtlStatusParser.parse(exitCode: result.exitCode, output: result.output)
     }
 
     /// `kickstart -k`：已在跑就重启，没在跑就拉起来。启动与重启是同一条路径。
-    public nonisolated func restart() -> ServiceState {
-        guard let result = try? runner.run("/bin/launchctl", ["kickstart", "-k", paths.launchctlTarget]) else {
+    public nonisolated func restart() async -> ServiceState {
+        guard let result = try? await runner.run("/bin/launchctl", ["kickstart", "-k", paths.launchctlTarget]) else {
             return .failed("无法调用 launchctl")
         }
         return result.succeeded ? .running : .failed(result.output.trimmed())
     }
 
-    public nonisolated func stop() -> ServiceState {
-        guard let result = try? runner.run("/bin/launchctl", ["bootout", paths.launchctlTarget]) else {
+    public nonisolated func stop() async -> ServiceState {
+        guard let result = try? await runner.run("/bin/launchctl", ["bootout", paths.launchctlTarget]) else {
             return .failed("无法调用 launchctl")
         }
         return result.succeeded ? .stopped : .failed(result.output.trimmed())
@@ -43,13 +43,13 @@ public struct RuntimeManager: Sendable {
     /// 顺序很关键——直接写正式配置再重启，配置有问题时服务会起不来，而旧配置已经没了，
     /// 代理直接全断。所以先写到 `routebar-next.json` 跑 `sing-box check`，
     /// 校验失败就原地抛错，正式配置一个字节都没动。
-    public nonisolated func install(_ generated: GeneratedConfiguration) throws {
+    public nonisolated func install(_ generated: GeneratedConfiguration) async throws {
         let candidate = paths.singBoxConfigDirectory.appendingPathComponent("routebar-next.json")
         try FileManager.default.createDirectory(at: paths.singBoxConfigDirectory, withIntermediateDirectories: true)
         try generated.singBoxJSON.write(to: candidate, options: .atomic)
         defer { try? FileManager.default.removeItem(at: candidate) }
 
-        let check = try runner.run(paths.singBoxBinary.path, ["check", "-c", candidate.path])
+        let check = try await runner.run(paths.singBoxBinary.path, ["check", "-c", candidate.path])
         guard check.succeeded else { throw InstallError.validation(check.output.trimmed()) }
 
         try backup(paths.singBoxConfig)
@@ -64,6 +64,17 @@ public struct RuntimeManager: Sendable {
         try backup(surgeURL)
         try Data(updated.utf8).write(to: surgeURL, options: .atomic)
         CoreLog.configuration.notice("已安装配置：\(generated.nodes.count) 个节点")
+    }
+
+    /// sing-box JSON 与 Surge 托管段都已经是目标内容时，不再校验、覆盖或重启。
+    public nonisolated func installedConfigurationMatches(_ generated: GeneratedConfiguration) -> Bool {
+        guard let installedJSON = try? Data(contentsOf: paths.singBoxConfig),
+              installedJSON == generated.singBoxJSON,
+              let profile = try? String(contentsOf: paths.surgeProfile, encoding: .utf8),
+              let updatedProfile = try? SurgeProfileUpdater.update(profile, with: generated) else {
+            return false
+        }
+        return updatedProfile == profile
     }
 
     /// 覆盖前留一份 `.routebar-backup`，手工回滚时有东西可用。

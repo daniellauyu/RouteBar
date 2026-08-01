@@ -249,9 +249,12 @@ extension ProxyNode {
     }
 
     var latencyTint: Color {
-        guard let latency else { return .secondary }
-        guard let milliseconds = latency.milliseconds else { return .red }
-        return milliseconds < 100 ? .green : milliseconds <= 200 ? .orange : .red
+        switch LatencyClassification.band(for: latency) {
+        case .untested: .secondary
+        case .failed, .slow: .red
+        case .fast: .green
+        case .medium: .orange
+        }
     }
 }
 

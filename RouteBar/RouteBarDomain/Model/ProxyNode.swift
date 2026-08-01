@@ -21,9 +21,9 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
     public var isEnabled: Bool
     public var latency: LatencyRecord?
 
-    public init(id: String, name: String, server: String, serverPort: Int, uuid: String,
-                flow: String, serverName: String, publicKey: String, shortID: String,
-                fingerprint: String, sourceIDs: [UUID], isEnabled: Bool, latency: LatencyRecord? = nil) {
+    public nonisolated init(id: String, name: String, server: String, serverPort: Int, uuid: String,
+                            flow: String, serverName: String, publicKey: String, shortID: String,
+                            fingerprint: String, sourceIDs: [UUID], isEnabled: Bool, latency: LatencyRecord? = nil) {
         self.id = id
         self.name = name
         self.server = server
@@ -109,7 +109,7 @@ public struct LatencyRecord: Codable, Hashable, Sendable {
     public var milliseconds: Int?
     public var measuredAt: Date
 
-    public init(outcome: LatencyOutcome, milliseconds: Int?, measuredAt: Date = .now) {
+    public nonisolated init(outcome: LatencyOutcome, milliseconds: Int?, measuredAt: Date = .now) {
         self.outcome = outcome
         self.milliseconds = milliseconds
         self.measuredAt = measuredAt
@@ -117,5 +117,24 @@ public struct LatencyRecord: Codable, Hashable, Sendable {
 
     public nonisolated func isStale(at date: Date = .now, maximumAge: TimeInterval = 600) -> Bool {
         date.timeIntervalSince(measuredAt) > maximumAge
+    }
+}
+
+/// RouteBar 测的是「Surge → 本地 sing-box → Reality 节点 → 测试站点」的端到端延迟，
+/// 天然包含多段握手与往返，不能套用直连节点常见的 100/200 ms 阈值。
+public enum LatencyBand: Sendable, Equatable {
+    case untested, failed, fast, medium, slow
+}
+
+public enum LatencyClassification {
+    public nonisolated static var fastUpperBound: Int { 600 }
+    public nonisolated static var mediumUpperBound: Int { 1_000 }
+
+    public nonisolated static func band(for latency: LatencyRecord?) -> LatencyBand {
+        guard let latency else { return .untested }
+        guard latency.outcome == .success, let milliseconds = latency.milliseconds else { return .failed }
+        if milliseconds < fastUpperBound { return .fast }
+        if milliseconds <= mediumUpperBound { return .medium }
+        return .slow
     }
 }

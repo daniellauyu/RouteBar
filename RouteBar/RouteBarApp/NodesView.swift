@@ -1,14 +1,20 @@
 import SwiftUI
 
 private enum NodeLatencyFilter: String, CaseIterable, Identifiable {
-    case all = "全部延迟"
-    case fast = "低于 100 ms"
-    case medium = "100–200 ms"
-    case slow = "高于 200 ms"
-    case failed = "不可用"
-    case untested = "未测试"
+    case all, fast, medium, slow, failed, untested
 
     var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: "全部延迟"
+        case .fast: "低于 \(LatencyClassification.fastUpperBound) ms"
+        case .medium: "\(LatencyClassification.fastUpperBound)–\(LatencyClassification.mediumUpperBound) ms"
+        case .slow: "高于 \(LatencyClassification.mediumUpperBound) ms"
+        case .failed: "不可用"
+        case .untested: "未测试"
+        }
+    }
 }
 
 private enum NodeSort: String, CaseIterable, Identifiable {
@@ -82,37 +88,59 @@ struct NodesView: View {
     }
 
     private var filterBar: some View {
-        HStack(spacing: 10) {
-            Picker("订阅", selection: $sourceID) {
-                Text("全部订阅").tag(UUID?.none)
-                ForEach(model.subscriptions) { Text($0.name).tag(Optional($0.id)) }
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                sourcePicker.frame(width: 140)
+                regionPicker.frame(width: 110)
+                latencyPicker.frame(width: 130)
+                sortPicker.frame(width: 110)
             }
-            .labelsHidden()
-            .frame(width: 140)
+            .fixedSize(horizontal: true, vertical: false)
 
-            Picker("地区", selection: $region) {
-                ForEach(regions, id: \.self) { Text($0).tag($0) }
+            Grid(horizontalSpacing: 10, verticalSpacing: 8) {
+                GridRow {
+                    sourcePicker.frame(maxWidth: .infinity)
+                    regionPicker.frame(maxWidth: .infinity)
+                }
+                GridRow {
+                    latencyPicker.frame(maxWidth: .infinity)
+                    sortPicker.frame(maxWidth: .infinity)
+                }
             }
-            .labelsHidden()
-            .frame(width: 110)
-
-            Picker("延迟", selection: $latencyFilter) {
-                ForEach(NodeLatencyFilter.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .labelsHidden()
-            .frame(width: 130)
-
-            Picker("排序", selection: $sort) {
-                ForEach(NodeSort.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .labelsHidden()
-            .frame(width: 110)
-
-            Spacer()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .controlSize(.small)
         .padding(.horizontal, 20)
         .padding(.bottom, 12)
+    }
+
+    private var sourcePicker: some View {
+        Picker("订阅", selection: $sourceID) {
+            Text("全部订阅").tag(UUID?.none)
+            ForEach(model.subscriptions) { Text($0.name).tag(Optional($0.id)) }
+        }
+        .labelsHidden()
+    }
+
+    private var regionPicker: some View {
+        Picker("地区", selection: $region) {
+            ForEach(regions, id: \.self) { Text($0).tag($0) }
+        }
+        .labelsHidden()
+    }
+
+    private var latencyPicker: some View {
+        Picker("延迟", selection: $latencyFilter) {
+            ForEach(NodeLatencyFilter.allCases) { Text($0.label).tag($0) }
+        }
+        .labelsHidden()
+    }
+
+    private var sortPicker: some View {
+        Picker("排序", selection: $sort) {
+            ForEach(NodeSort.allCases) { Text($0.rawValue).tag($0) }
+        }
+        .labelsHidden()
     }
 
     private var statusBar: some View {
@@ -166,11 +194,11 @@ struct NodesView: View {
     private func matchesLatency(_ node: ProxyNode) -> Bool {
         switch latencyFilter {
         case .all: true
-        case .untested: node.latency == nil
-        case .failed: node.latency != nil && node.latency?.outcome != .success
-        case .fast: (node.latency?.milliseconds).map { $0 < 100 } ?? false
-        case .medium: (node.latency?.milliseconds).map { (100...200).contains($0) } ?? false
-        case .slow: (node.latency?.milliseconds).map { $0 > 200 } ?? false
+        case .untested: LatencyClassification.band(for: node.latency) == .untested
+        case .failed: LatencyClassification.band(for: node.latency) == .failed
+        case .fast: LatencyClassification.band(for: node.latency) == .fast
+        case .medium: LatencyClassification.band(for: node.latency) == .medium
+        case .slow: LatencyClassification.band(for: node.latency) == .slow
         }
     }
 

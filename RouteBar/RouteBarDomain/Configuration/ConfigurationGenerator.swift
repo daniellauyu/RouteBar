@@ -19,9 +19,22 @@ public struct GeneratedConfiguration: Sendable {
 /// Surge 看到的是一组普通 SOCKS5 代理，规则、策略组、测速都用它原生那一套；
 /// sing-box 只负责把某个本地端口的流量按 Reality 送出去，两边职责不重叠。
 public enum ConfigurationGenerator {
+    /// 只算「哪个节点占哪个本地端口」，不生成配置文档。
+    ///
+    /// 界面（节点列表、详情栏）要的只是端口号，而 `generate` 里最贵的一步是把整份
+    /// sing-box 配置做 JSONSerialization——实测 51 个节点 1.3ms、500 个节点 12ms。
+    /// 状态快照每次操作都要重算端口，走 `generate` 等于每次都白序列化一份配置。
+    ///
+    /// `generate` 复用这个方法，两条路径的编号规则因此不可能分叉——否则界面显示的端口
+    /// 会和真正写进配置的对不上，而这种错位极难发现。
+    public nonisolated static func portMapping(nodes: [ProxyNode], startingPort: Int = 7701) -> [PortMappedNode] {
+        NodeCatalog.merge(nodes.filter(\.isEnabled))
+            .enumerated()
+            .map { PortMappedNode(node: $0.element, localPort: startingPort + $0.offset) }
+    }
+
     public nonisolated static func generate(nodes: [ProxyNode], startingPort: Int = 7701) throws -> GeneratedConfiguration {
-        let enabled = NodeCatalog.merge(nodes.filter(\.isEnabled))
-        let mapped = enabled.enumerated().map { PortMappedNode(node: $0.element, localPort: startingPort + $0.offset) }
+        let mapped = portMapping(nodes: nodes, startingPort: startingPort)
 
         let inbounds: [[String: Any]] = mapped.enumerated().map { index, item in
             ["type": "mixed", "tag": tag("in", index), "listen": "127.0.0.1",

@@ -31,6 +31,8 @@ public actor SubscriptionCoordinator {
     private var autoUpdatePaused: Bool
     private var serviceState: ServiceState = .stopped
     private var generatedAt: Date?
+    private var regenerationInProgress = false
+    private var regenerationWaiters: [CheckedContinuation<Void, Never>] = []
 
     public init(stateStore: StateStore = StateStore(),
                 keychain: KeychainStore = KeychainStore(),
@@ -58,8 +60,9 @@ public actor SubscriptionCoordinator {
     /// 端口映射在这里现算而不是缓存：它是「启用节点」的纯函数，现算永远和即将写入的
     /// 配置一致；缓存则会在用户刚改完启用状态、还没重新生成时显示过期端口。
     public func snapshot() -> AppViewState {
-        let merged = NodeCatalog.merge(subscriptions.filter(\.isEnabled).flatMap(\.nodes))
-        let mapped = (try? ConfigurationGenerator.generate(nodes: merged).nodes) ?? []
+        // 只要端口映射，不要整份配置：走 generate 会白白多做一次 JSON 序列化，
+        // 而快照在每次操作后都要重算。portMapping 内部已经会去重，这里不必先 merge 一遍。
+        let mapped = ConfigurationGenerator.portMapping(nodes: subscriptions.filter(\.isEnabled).flatMap(\.nodes))
         return AppViewState(
             subscriptions: subscriptions,
             serviceState: serviceState,
@@ -82,11 +85,17 @@ public actor SubscriptionCoordinator {
     // MARK: - 启动
 
     /// 首次启动流程：探测既有配置、刷新服务状态。
-    public func bootstrap() -> CoordinatorOutcome {
+    public func bootstrap() async -> CoordinatorOutcome {
         var messages: [OutcomeMessage] = []
-        serviceState = runtime.status()
-        if subscriptions.isEmpty, let imported = importExistingSubscription() {
-            messages.append(.init(.notice, "订阅", "从现有 Mihomo 配置导入了订阅「\(imported)」"))
+        serviceState = await runtime.status()
+        if subscriptions.isEmpty {
+            do {
+                if let imported = try importExistingSubscription() {
+                    messages.append(.init(.notice, "订阅", "从现有 Mihomo 配置导入了订阅「\(imported)」"))
+                }
+            } catch {
+                messages.append(.init(.error, "订阅", "从 Mihomo 导入订阅失败：\(error.localizedDescription)"))
+            }
         }
         messages.append(.init(.info, "生命周期",
                               "引擎已就绪：\(subscriptions.count) 个订阅 · sing-box \(serviceState.label)"))
@@ -94,15 +103,15 @@ public actor SubscriptionCoordinator {
     }
 
     /// 从既有 Mihomo 配置里捞一条订阅地址，免去首次使用时手工粘贴。
-    private func importExistingSubscription() -> String? {
+    private func importExistingSubscription() throws -> String? {
         let path = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/mihomo/config.yaml")
         guard let text = try? String(contentsOf: path, encoding: .utf8),
               let regex = try? NSRegularExpression(pattern: #"url:\s*\"([^\"]+)\""#),
               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
               let range = Range(match.range(at: 1), in: text) else { return nil }
         let name = "当前订阅"
-        try? saveSubscription(id: nil, name: name, url: String(text[range]),
-                              note: "从现有 Mihomo 配置导入", interval: 6)
+        try saveSubscription(id: nil, name: name, url: String(text[range]),
+                             note: "从现有 Mihomo 配置导入", interval: 6)
         return name
     }
 
@@ -139,9 +148,7 @@ public actor SubscriptionCoordinator {
         subscriptions[index].status = enabled ? .idle : .disabled
         let name = subscriptions[index].name
         try? persist()
-        var messages: [OutcomeMessage] = [.init(.notice, "订阅", "\(enabled ? "启用" : "停用")订阅「\(name)」")]
-        messages += regenerateMessages()
-        return outcome(messages)
+        return outcome([.init(.notice, "订阅", "\(enabled ? "启用" : "停用")订阅「\(name)」")])
     }
 
     public func setNodeEnabled(_ enabled: Bool, id: String) -> CoordinatorOutcome {
@@ -154,9 +161,7 @@ public actor SubscriptionCoordinator {
             }
         }
         try? persist()
-        var messages: [OutcomeMessage] = [.init(.info, "节点", "\(enabled ? "启用" : "停用")节点「\(name)」")]
-        messages += regenerateMessages()
-        return outcome(messages)
+        return outcome([.init(.info, "节点", "\(enabled ? "启用" : "停用")节点「\(name)」")])
     }
 
     // MARK: - 更新
@@ -211,12 +216,24 @@ public actor SubscriptionCoordinator {
 
     // MARK: - 生成与安装
 
-    public func regenerate() -> CoordinatorOutcome {
-        outcome(regenerateMessages())
+    public func regenerate(forceRestart: Bool = false) async -> CoordinatorOutcome {
+        outcome(await regenerateMessages(forceRestart: forceRestart))
     }
 
     /// 生成 → 校验 → 安装 → 重启，并把每一步的结果转成日志消息。
-    private func regenerateMessages() -> [OutcomeMessage] {
+    private func regenerateMessages(forceRestart: Bool) async -> [OutcomeMessage] {
+        // CommandRunner 是 async 的，等待子进程时 actor 会允许其他调用进入。安装链路本身仍必须
+        // 严格串行，否则旧配置的 check 后完成时可能反过来覆盖较新的配置。
+        await acquireRegenerationSlot()
+        defer { releaseRegenerationSlot() }
+
+        // 排队等锁期间调用方可能已经取消（防抖被后一次改动取代）。
+        // `withCheckedContinuation` 不响应取消，只能在拿到锁之后自己检查一次，
+        // 否则被取代的那次重装仍会跑完——虽然无害，但会多一次无谓的校验和落盘。
+        if Task.isCancelled {
+            return [.init(.info, "配置", "重新生成已被更新的改动取代，本次跳过")]
+        }
+
         let merged = NodeCatalog.merge(subscriptions.filter(\.isEnabled).flatMap(\.nodes))
         do {
             let generated = try ConfigurationGenerator.generate(nodes: merged)
@@ -224,9 +241,16 @@ public actor SubscriptionCoordinator {
                 return [.init(.warning, "配置", "没有启用节点，已跳过生成（Surge 配置保持原样）")]
             }
             try stateStore.saveGenerated(generated)
-            try runtime.install(generated)
             generatedAt = .now
-            serviceState = runtime.restart()
+            if runtime.installedConfigurationMatches(generated), !forceRestart {
+                // 不重装也要把服务状态对齐：跳过分支是「什么都不做」，但期间 sing-box
+                // 可能已经被外部停掉或崩了，直接 return 会让界面一直显示旧状态，
+                // 直到下次窗口激活才自我纠正。
+                serviceState = await runtime.status()
+                return [.init(.info, "配置", "配置未变化，已跳过安装与 sing-box 重启")]
+            }
+            try await runtime.install(generated)
+            serviceState = await runtime.restart()
             var messages: [OutcomeMessage] = [
                 .init(.notice, "配置", "已生成并安装 \(generated.nodes.count) 个节点出口"),
             ]
@@ -245,11 +269,28 @@ public actor SubscriptionCoordinator {
         }
     }
 
+    private func acquireRegenerationSlot() async {
+        guard regenerationInProgress else {
+            regenerationInProgress = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            regenerationWaiters.append(continuation)
+        }
+    }
+
+    private func releaseRegenerationSlot() {
+        if regenerationWaiters.isEmpty {
+            regenerationInProgress = false
+        } else {
+            regenerationWaiters.removeFirst().resume()
+        }
+    }
+
     // MARK: - 延迟测试
 
     public func mappedNodes() -> [PortMappedNode] {
-        let merged = NodeCatalog.merge(subscriptions.filter(\.isEnabled).flatMap(\.nodes))
-        return (try? ConfigurationGenerator.generate(nodes: merged).nodes) ?? []
+        ConfigurationGenerator.portMapping(nodes: subscriptions.filter(\.isEnabled).flatMap(\.nodes))
     }
 
     /// 测试一批节点。测速端点与采样次数由调用方（设置）给出，不在引擎里写死。
@@ -283,22 +324,22 @@ public actor SubscriptionCoordinator {
 
     // MARK: - 服务控制
 
-    public func refreshServiceState() -> CoordinatorOutcome {
+    public func refreshServiceState() async -> CoordinatorOutcome {
         let previous = serviceState
-        serviceState = runtime.status()
+        serviceState = await runtime.status()
         guard previous != serviceState else { return outcome() }
         return outcome([.init(serviceState.failureReason == nil ? .info : .error, "服务",
                               "sing-box 状态变为「\(serviceState.label)」")])
     }
 
-    public func restartService() -> CoordinatorOutcome {
-        serviceState = runtime.restart()
+    public func restartService() async -> CoordinatorOutcome {
+        serviceState = await runtime.restart()
         return outcome([.init(serviceState.isRunning ? .notice : .error, "服务",
                               serviceState.isRunning ? "sing-box 已启动" : "sing-box 启动失败：\(serviceState.failureReason ?? "未知原因")")])
     }
 
-    public func stopService() -> CoordinatorOutcome {
-        serviceState = runtime.stop()
+    public func stopService() async -> CoordinatorOutcome {
+        serviceState = await runtime.stop()
         return outcome([.init(.notice, "服务", "已停止 sing-box")])
     }
 
@@ -308,12 +349,12 @@ public actor SubscriptionCoordinator {
 
     // MARK: - 设置
 
-    public func saveSettings(_ newSettings: RouteBarSettings) -> CoordinatorOutcome {
+    public func saveSettings(_ newSettings: RouteBarSettings) async -> CoordinatorOutcome {
         do {
             try stateStore.saveSettings(newSettings)
             settings = newSettings
             runtime = RuntimeManager(settings: newSettings)
-            serviceState = runtime.status()
+            serviceState = await runtime.status()
             return outcome([.init(.notice, "设置", "环境路径已更新")])
         } catch {
             return outcome([.init(.error, "设置", "保存设置失败：\(error.localizedDescription)")])

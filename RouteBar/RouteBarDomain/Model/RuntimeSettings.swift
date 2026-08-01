@@ -5,7 +5,7 @@ import Foundation
 /// RouteBar 不自带 sing-box，也不接管 Surge 的安装位置——它把两者接起来。
 /// 因此所有外部路径都是设置项而不是硬编码常量：Homebrew 前缀、Surge 配置名、
 /// LaunchAgent Label 在不同机器上都不一样。
-public struct RouteBarSettings: Codable, Equatable, Sendable {
+public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Sendable {
     public var singBoxBinaryPath: String
     public var singBoxConfigPath: String
     public var singBoxLogPath: String
@@ -14,13 +14,13 @@ public struct RouteBarSettings: Codable, Equatable, Sendable {
     public var launchAgentPath: String
     public var launchAgentLabel: String
 
-    public init(singBoxBinaryPath: String,
-                singBoxConfigPath: String,
-                singBoxLogPath: String,
-                singBoxErrorLogPath: String,
-                surgeProfilePath: String,
-                launchAgentPath: String,
-                launchAgentLabel: String) {
+    public nonisolated init(singBoxBinaryPath: String,
+                            singBoxConfigPath: String,
+                            singBoxLogPath: String,
+                            singBoxErrorLogPath: String,
+                            surgeProfilePath: String,
+                            launchAgentPath: String,
+                            launchAgentLabel: String) {
         self.singBoxBinaryPath = singBoxBinaryPath
         self.singBoxConfigPath = singBoxConfigPath
         self.singBoxLogPath = singBoxLogPath
@@ -50,9 +50,9 @@ public struct RuntimePaths: Sendable, Equatable {
     public let userID: uid_t
     public let settings: RouteBarSettings
 
-    public init(home: URL = FileManager.default.homeDirectoryForCurrentUser,
-                userID: uid_t = getuid(),
-                settings: RouteBarSettings? = nil) {
+    public nonisolated init(home: URL = FileManager.default.homeDirectoryForCurrentUser,
+                            userID: uid_t = getuid(),
+                            settings: RouteBarSettings? = nil) {
         self.home = home
         self.userID = userID
         self.settings = settings ?? RouteBarSettings.defaults(home: home)
@@ -89,7 +89,7 @@ public struct RouteBarEnvironmentReport: Equatable, Sendable {
     public let singBoxConfigDirectory: EnvironmentItemState
     public let launchAgent: EnvironmentItemState
 
-    public init(paths: RuntimePaths, exists: (URL) -> Bool) {
+    public nonisolated init(paths: RuntimePaths, exists: (URL) -> Bool) {
         singBoxBinary = exists(paths.singBoxBinary) ? .ready : .missing
         surgeProfilesDirectory = exists(paths.surgeProfilesDirectory) ? .ready : .missing
         surgeProfile = exists(paths.surgeProfile) ? .ready : .missing

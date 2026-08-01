@@ -40,9 +40,9 @@ public struct SubscriptionRecord: Codable, Identifiable, Hashable, Sendable {
     public var lastError: String?
     public var nodes: [ProxyNode]
 
-    public init(id: UUID = UUID(), name: String, note: String = "", isEnabled: Bool = true,
-                createdAt: Date = .now, updatedAt: Date? = nil, updateIntervalHours: Int = 6,
-                status: SubscriptionStatus = .idle, lastError: String? = nil, nodes: [ProxyNode] = []) {
+    public nonisolated init(id: UUID = UUID(), name: String, note: String = "", isEnabled: Bool = true,
+                            createdAt: Date = .now, updatedAt: Date? = nil, updateIntervalHours: Int = 6,
+                            status: SubscriptionStatus = .idle, lastError: String? = nil, nodes: [ProxyNode] = []) {
         self.id = id
         self.name = name
         self.note = note
@@ -57,11 +57,11 @@ public struct SubscriptionRecord: Codable, Identifiable, Hashable, Sendable {
 }
 
 /// 落盘状态（`~/Library/Application Support/RouteBar/state.json`）。
-public struct RouteBarState: Codable, Sendable {
+public struct RouteBarState: nonisolated Codable, Sendable {
     public var subscriptions: [SubscriptionRecord]
     public var autoUpdatePaused: Bool
 
-    public init(subscriptions: [SubscriptionRecord] = [], autoUpdatePaused: Bool = false) {
+    public nonisolated init(subscriptions: [SubscriptionRecord] = [], autoUpdatePaused: Bool = false) {
         self.subscriptions = subscriptions
         self.autoUpdatePaused = autoUpdatePaused
     }

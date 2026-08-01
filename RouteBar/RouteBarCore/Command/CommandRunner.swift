@@ -42,7 +42,19 @@ public struct CommandRunner: Sendable {
         self.timeoutSeconds = timeoutSeconds
     }
 
-    public nonisolated func run(_ executable: String, _ arguments: [String]) throws -> CommandResult {
+    /// 子进程与管道读取全部放到后台任务，调用方 actor 在等待期间可以继续处理其他消息。
+    public nonisolated func run(_ executable: String, _ arguments: [String]) async throws -> CommandResult {
+        let timeoutSeconds = timeoutSeconds
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.runSynchronously(executable, arguments, timeoutSeconds: timeoutSeconds)
+        }.value
+    }
+
+    private nonisolated static func runSynchronously(
+        _ executable: String,
+        _ arguments: [String],
+        timeoutSeconds: TimeInterval
+    ) throws -> CommandResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments

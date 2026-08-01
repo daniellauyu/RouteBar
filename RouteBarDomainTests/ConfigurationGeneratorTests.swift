@@ -45,6 +45,22 @@ struct ConfigurationGeneratorTests {
         #expect(!updated.contains("old = socks5"))
     }
 
+    @Test func updatingAnInstalledSurgeProfileIsIdempotent() throws {
+        let generated = try ConfigurationGenerator.generate(nodes: [makeNode("Hong Kong 01", "a.example.com")])
+        let original = """
+        [General]
+        ipv6 = false
+        [Proxy]
+        old = socks5, 127.0.0.1, 9999
+        [Proxy Group]
+        sing-box 节点 = select, old
+        [Rule]
+        FINAL,sing-box 节点
+        """
+        let installed = try SurgeProfileUpdater.update(original, with: generated)
+        #expect(try SurgeProfileUpdater.update(installed, with: generated) == installed)
+    }
+
     @Test func runtimePathsExposeManagedConfigLogAndLaunchAgentLocations() {
         let home = URL(fileURLWithPath: "/Users/tester", isDirectory: true)
         let paths = RuntimePaths(home: home, userID: 501)
@@ -132,5 +148,33 @@ struct ConfigurationGeneratorTests {
         #expect(LatencyTestEndpoint.resolve("").host == fallbackHost)
         #expect(LatencyTestEndpoint.resolve("https:/").host == fallbackHost)
         #expect(LatencyTestEndpoint.resolve("随便写的").host == fallbackHost)
+    }
+}
+
+@Suite struct PortMappingTests {
+    private func node(_ id: String, enabled: Bool = true) -> ProxyNode {
+        ProxyNode(id: id, name: "节点\(id)", server: "\(id).example.com", serverPort: 443,
+                  uuid: "11111111-1111-1111-1111-111111111111", flow: "xtls-rprx-vision",
+                  serverName: "www.apple.com", publicKey: "pk", shortID: "sid",
+                  fingerprint: "chrome", sourceIDs: [UUID()], isEnabled: enabled)
+    }
+
+    /// 轻量端口映射与完整生成必须给出完全一致的编号。
+    /// 一旦分叉，界面显示的端口就和真正写进 sing-box 的对不上，而这种错位极难察觉。
+    @Test func portMappingMatchesFullGeneration() throws {
+        let nodes = [node("c"), node("a"), node("b"), node("d", enabled: false)]
+        let light = ConfigurationGenerator.portMapping(nodes: nodes)
+        let full = try ConfigurationGenerator.generate(nodes: nodes).nodes
+
+        #expect(light.map(\.node.id) == full.map(\.node.id))
+        #expect(light.map(\.localPort) == full.map(\.localPort))
+        // 禁用节点不占端口，否则启用的节点会跳号。
+        #expect(!light.contains { $0.node.id == "d" })
+        #expect(light.map(\.localPort) == [7701, 7702, 7703])
+    }
+
+    @Test func portMappingHonoursCustomStartingPort() {
+        let mapped = ConfigurationGenerator.portMapping(nodes: [node("a"), node("b")], startingPort: 9000)
+        #expect(mapped.map(\.localPort) == [9000, 9001])
     }
 }
