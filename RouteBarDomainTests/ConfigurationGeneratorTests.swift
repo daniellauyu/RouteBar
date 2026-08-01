@@ -63,14 +63,19 @@ struct ConfigurationGeneratorTests {
 
     @Test func runtimePathsExposeManagedConfigLogAndLaunchAgentLocations() {
         let home = URL(fileURLWithPath: "/Users/tester", isDirectory: true)
-        let paths = RuntimePaths(home: home, userID: 501)
+        let settings = RouteBarSettings.defaults(
+            home: home,
+            bundleIdentifier: "com.example.RouteBar",
+            executableExists: { _ in true })
+        let paths = RuntimePaths(home: home, userID: 501, settings: settings)
 
         #expect(paths.singBoxConfig.path == "/Users/tester/.config/sing-box/surge-vless.json")
         #expect(paths.singBoxLog.path == "/Users/tester/.config/sing-box/surge-vless.log")
         #expect(paths.singBoxErrorLog.path == "/Users/tester/.config/sing-box/surge-vless-error.log")
         #expect(paths.surgeProfile.path == "/Users/tester/Library/Application Support/Surge/Profiles/surge-singbox.conf")
-        #expect(paths.launchAgent.path == "/Users/tester/Library/LaunchAgents/com.daniellau.sing-box-surge.plist")
-        #expect(paths.launchctlTarget == "gui/501/com.daniellau.sing-box-surge")
+        // Label 跟着 bundle id 走，plist 文件名与 launchctl 目标都由它派生。
+        #expect(paths.launchAgent.path == "/Users/tester/Library/LaunchAgents/com.example.RouteBar.sing-box.plist")
+        #expect(paths.launchctlTarget == "gui/501/com.example.RouteBar.sing-box")
     }
 
     @Test func runtimePathsCanBeBuiltFromUserSettings() {

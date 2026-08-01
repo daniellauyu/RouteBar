@@ -1,5 +1,37 @@
 # Changelog
 
+## v1.2.0
+
+让 RouteBar 能装在别人机器上。此前它检测得出 LaunchAgent 缺失，却不提供任何解法——
+新用户只能自己手写 plist，这是唯一一处过不去的坎。
+
+### LaunchAgent 成为第三个托管产物
+
+- 新增 `LaunchAgentDefinition`：plist 的每个字段都从设置派生，和 `sing-box.json`、
+  Surge 的 `[Proxy]` 段地位相同。做成一次性的「创建」按钮会让同一份信息有两个来源，
+  用户改完路径后 plist 还指着旧的二进制。
+- 「环境」页可直接创建并 `launchctl bootstrap` 加载，设置变更后可重新生成。
+- 托管标记写成 XML 注释而非自定义键：launchd 对不认识的键会报警告，注释则在解析前丢弃。
+- **绝不静默覆盖别人的文件。** 非 RouteBar 创建的 plist 会先展示完整内容供确认，
+  原文件保留为 `.routebar-backup`——手写的 plist 里可能有 RouteBar 不知道的字段。
+
+### 首次启动接管已有服务
+
+- 新增 `LaunchAgentDiscovery`：没有 settings.json 时扫描 `~/Library/LaunchAgents`，
+  按启动命令（`sing-box run -c <配置>`）识别，不看 Label 和文件名——那些是任人取的。
+  认出后把 Label 与四个路径写进设置。
+- 不这么做的话，已经手搭好一套的用户打开应用只会看到「LaunchAgent 未找到、服务已停止」，
+  而他的代理明明跑得好好的，只是标识对不上。
+
+### 默认值
+
+- LaunchAgent Label 从 bundle identifier 派生，不再硬编码某个作者的名字。
+- sing-box 路径按 `/opt/homebrew/bin` → `/usr/local/bin` → `/usr/bin` 探测，
+  原来写死 Homebrew 的 Apple Silicon 前缀，在 Intel Mac 上必然是错的。
+- Surge 提示改为说明「新建一份含 `[Proxy]` 和 `[Proxy Group]` 的配置即可」。
+
+以上只影响没有 settings.json 的机器；已保存过设置的不受影响。
+
 ## v1.1.2
 
 一轮代码审查后的集中修复。

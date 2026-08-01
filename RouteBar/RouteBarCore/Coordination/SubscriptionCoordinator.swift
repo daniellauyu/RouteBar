@@ -31,6 +31,8 @@ public actor SubscriptionCoordinator {
     private var autoUpdatePaused: Bool
     private var serviceState: ServiceState = .stopped
     private var generatedAt: Date?
+    /// 首次启动时接管到的既有服务，用于在日志里说明「为什么设置不是默认值」。
+    private let adoptedLaunchAgent: DiscoveredLaunchAgent?
     private var regenerationInProgress = false
     private var regenerationWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -43,7 +45,19 @@ public actor SubscriptionCoordinator {
         self.fetcher = fetcher
         self.latencyTester = latencyTester
 
-        let loadedSettings = stateStore.loadSettings()
+        // 从没配置过时，先看机器上有没有现成的 sing-box 服务可以接管。
+        // 不这么做的话，已经手搭好一套的用户打开应用只会看到「LaunchAgent 未找到、
+        // 服务已停止」——而他的代理明明跑得好好的，只是标识对不上。
+        var loadedSettings = stateStore.loadSettings()
+        var adopted: DiscoveredLaunchAgent?
+        if !stateStore.hasStoredSettings,
+           let discovered = LaunchAgentDiscovery.discover(plists: stateStore.launchAgentPlists()) {
+            loadedSettings = LaunchAgentDiscovery.adopt(discovered, into: loadedSettings)
+            adopted = discovered
+            try? stateStore.saveSettings(loadedSettings)
+        }
+        adoptedLaunchAgent = adopted
+
         let loadedState = stateStore.load()
         settings = loadedSettings
         runtime = RuntimeManager(settings: loadedSettings)
@@ -87,6 +101,10 @@ public actor SubscriptionCoordinator {
     /// 首次启动流程：探测既有配置、刷新服务状态。
     public func bootstrap() async -> CoordinatorOutcome {
         var messages: [OutcomeMessage] = []
+        if let adopted = adoptedLaunchAgent {
+            messages.append(.init(.notice, "环境",
+                                  "已接管现有的 sing-box 服务「\(adopted.label)」，配置与日志路径取自它的 LaunchAgent"))
+        }
         serviceState = await runtime.status()
         if subscriptions.isEmpty {
             do {
@@ -358,6 +376,24 @@ public actor SubscriptionCoordinator {
             return outcome([.init(.notice, "设置", "环境路径已更新")])
         } catch {
             return outcome([.init(.error, "设置", "保存设置失败：\(error.localizedDescription)")])
+        }
+    }
+
+    // MARK: - LaunchAgent
+
+    public func launchAgentState() -> LaunchAgentState { runtime.launchAgentState() }
+
+    public func launchAgentPreview() -> String {
+        (try? runtime.launchAgentPreview()) ?? "无法生成预览"
+    }
+
+    public func installLaunchAgent(allowOverwritingForeignFile: Bool) async -> CoordinatorOutcome {
+        do {
+            try await runtime.installLaunchAgent(allowOverwritingForeignFile: allowOverwritingForeignFile)
+            serviceState = await runtime.status()
+            return outcome([.init(.notice, "服务", "已安装并加载 LaunchAgent（\(settings.launchAgentLabel)）")])
+        } catch {
+            return outcome([.init(.error, "服务", "安装 LaunchAgent 失败：\(error.localizedDescription)")])
         }
     }
 

@@ -36,9 +36,28 @@ public struct StateStore: Sendable {
 
     // MARK: - 设置
 
+    /// 用户是否配置过环境。为假时引擎会去接管机器上已有的 sing-box 服务（见 `LaunchAgentDiscovery`）。
+    public nonisolated var hasStoredSettings: Bool {
+        FileManager.default.fileExists(atPath: settingsURL.path)
+    }
+
     public nonisolated func loadSettings() -> RouteBarSettings {
         guard let data = try? Data(contentsOf: settingsURL) else { return RouteBarSettings.defaults() }
         return (try? JSONDecoder().decode(RouteBarSettings.self, from: data)) ?? RouteBarSettings.defaults()
+    }
+
+    /// 扫描 `~/Library/LaunchAgents` 下的 plist，交给 `LaunchAgentDiscovery` 判断。
+    public nonisolated func launchAgentPlists(home: URL = FileManager.default.homeDirectoryForCurrentUser)
+        -> [(path: String, data: Data)] {
+        let directory = home.appendingPathComponent("Library/LaunchAgents", isDirectory: true)
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return [] }
+        return names.sorted()
+            .filter { $0.hasSuffix(".plist") }
+            .compactMap { name in
+                let url = directory.appendingPathComponent(name)
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return (url.path, data)
+            }
     }
 
     public nonisolated func saveSettings(_ settings: RouteBarSettings) throws {

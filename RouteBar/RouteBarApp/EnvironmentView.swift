@@ -8,6 +8,9 @@ struct EnvironmentView: View {
     @EnvironmentObject private var model: AppModel
     @State private var draft = RouteBarSettings.defaults()
     @State private var hasLoadedDraft = false
+    @State private var launchAgentState: LaunchAgentState = .missing
+    @State private var isInstallingLaunchAgent = false
+    @State private var overwritePreview: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,6 +33,7 @@ struct EnvironmentView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     summaryBanner
+                    launchAgentCard
                     checkCard
                     pathsCard
                 }
@@ -38,10 +42,148 @@ struct EnvironmentView: View {
         }
         .task {
             // 只在首次进入时同步草稿，否则用户正在编辑时被后台刷新覆盖掉输入。
-            guard !hasLoadedDraft else { return }
-            draft = model.settings
-            hasLoadedDraft = true
+            if !hasLoadedDraft {
+                draft = model.settings
+                hasLoadedDraft = true
+            }
+            launchAgentState = await model.launchAgentState()
         }
+        .sheet(isPresented: Binding(
+            get: { overwritePreview != nil },
+            set: { if !$0 { overwritePreview = nil } }
+        )) {
+            if let preview = overwritePreview {
+                overwriteConfirmation(preview)
+            }
+        }
+    }
+
+    // MARK: - LaunchAgent
+
+    /// LaunchAgent 是唯一一项 RouteBar 能检测出问题、以前却不给任何解法的。
+    /// sing-box 由 launchd 拉起，plist 不存在时用户只能自己手写 XML——这一步现在由 RouteBar 负责。
+    private var launchAgentCard: some View {
+        InfoCard("LaunchAgent") {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: launchAgentSymbol)
+                    .foregroundStyle(launchAgentTint)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(launchAgentTitle).font(.callout.weight(.medium))
+                    Text(launchAgentDetail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                if isInstallingLaunchAgent {
+                    ProgressView().controlSize(.small)
+                } else if launchAgentState.needsAction {
+                    Button(launchAgentActionTitle) { beginLaunchAgentInstall() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var launchAgentSymbol: String {
+        switch launchAgentState {
+        case .managedUpToDate: "checkmark.circle.fill"
+        case .missing, .managedOutdated: "exclamationmark.triangle.fill"
+        case .foreign: "hand.raised.fill"
+        }
+    }
+
+    private var launchAgentTint: Color {
+        launchAgentState == .managedUpToDate ? .green : .orange
+    }
+
+    private var launchAgentTitle: String {
+        switch launchAgentState {
+        case .missing: "尚未创建"
+        case .managedUpToDate: "由 RouteBar 托管，且与当前设置一致"
+        case .managedOutdated: "设置已变更，plist 还是旧的"
+        case .foreign: "存在，但不是 RouteBar 创建的"
+        }
+    }
+
+    private var launchAgentDetail: String {
+        switch launchAgentState {
+        case .missing:
+            "sing-box 由 launchd 拉起并保活。RouteBar 会按上面的路径生成 plist 并立即加载。"
+        case .managedUpToDate:
+            "plist 内容由「路径设置」派生，改完路径重新生成即可。"
+        case .managedOutdated:
+            "plist 里的二进制或配置路径与当前设置不符，重新生成后 launchd 才会用新路径。"
+        case .foreign:
+            "这份 plist 可能含 RouteBar 不知道的字段。覆盖前会先让你过目完整内容，原文件会留一份 .routebar-backup。"
+        }
+    }
+
+    private var launchAgentActionTitle: String {
+        switch launchAgentState {
+        case .missing: "创建并加载"
+        case .foreign: "查看并覆盖…"
+        default: "重新生成"
+        }
+    }
+
+    private func beginLaunchAgentInstall() {
+        Task {
+            // 生成 plist 用的是已保存的设置，不是编辑中的草稿——否则写出来的
+            // plist 会指向用户还没保存、甚至可能撤销的路径。
+            if draft != model.settings { model.saveSettings(draft) }
+            if launchAgentState == .foreign {
+                overwritePreview = await model.launchAgentPreview()
+                return
+            }
+            await performInstall(allowOverwritingForeignFile: false)
+        }
+    }
+
+    private func performInstall(allowOverwritingForeignFile: Bool) async {
+        isInstallingLaunchAgent = true
+        await model.installLaunchAgent(allowOverwritingForeignFile: allowOverwritingForeignFile)
+        launchAgentState = await model.launchAgentState()
+        isInstallingLaunchAgent = false
+    }
+
+    private func overwriteConfirmation(_ preview: String) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("覆盖已有的 LaunchAgent", systemImage: "exclamationmark.triangle.fill")
+                .font(.headline)
+                .foregroundStyle(.orange)
+            Text("\(model.runtimePaths.launchAgent.path) 不是 RouteBar 创建的。覆盖后它将变成下面的内容，原文件会保留为 .routebar-backup。")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                Text(preview)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
+            .frame(height: 280)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.1)))
+            HStack {
+                Button("在访达中显示原文件") { model.reveal(model.runtimePaths.launchAgent) }
+                Spacer()
+                Button("取消") { overwritePreview = nil }
+                    .keyboardShortcut(.cancelAction)
+                Button("覆盖并加载") {
+                    overwritePreview = nil
+                    Task { await performInstall(allowOverwritingForeignFile: true) }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+            }
+        }
+        .padding(20)
+        .frame(width: 560)
     }
 
     private var report: RouteBarEnvironmentReport {
@@ -78,10 +220,11 @@ struct EnvironmentView: View {
                      hint: "Surge 安装后自动创建")
             Divider()
             checkRow("Surge 托管配置", report.surgeProfile, RuntimePaths(settings: draft).surgeProfile.path,
-                     hint: "必须是已有的 .conf，且含 [Proxy] 与 [Proxy Group] 段")
+                     hint: "在 Surge 里新建一份配置即可，只要含 [Proxy] 和 [Proxy Group] 两个段。"
+                         + "RouteBar 只改写 [Proxy] 段和「sing-box 节点」策略组，规则和其它策略组原样保留。")
             Divider()
             checkRow("LaunchAgent", report.launchAgent, RuntimePaths(settings: draft).launchAgent.path,
-                     hint: "由你自己安装的 plist，决定 sing-box 如何被 launchd 拉起")
+                     hint: "缺失时用上方「LaunchAgent」卡片里的按钮创建")
         }
     }
 

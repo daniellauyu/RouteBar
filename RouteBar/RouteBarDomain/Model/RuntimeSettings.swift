@@ -30,10 +30,29 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
         self.launchAgentLabel = launchAgentLabel
     }
 
-    public nonisolated static func defaults(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> RouteBarSettings {
-        let label = "com.daniellau.sing-box-surge"
+    /// Homebrew 在 Apple Silicon 与 Intel 上的前缀不同，装法也可能是别的包管理器。
+    /// 按存在性探测，探不到时回落到 Apple Silicon 路径——好过给一个在任何机器上都不对的值。
+    public nonisolated static let singBoxSearchPaths = [
+        "/opt/homebrew/bin/sing-box",
+        "/usr/local/bin/sing-box",
+        "/usr/bin/sing-box",
+    ]
+
+    /// 默认设置。
+    ///
+    /// 这些只是**默认值**，7 项全部可以在「环境」页改，改后存进 settings.json。
+    /// 已有 settings.json 的机器不受这里变动的影响。
+    public nonisolated static func defaults(
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        bundleIdentifier: String? = Bundle.main.bundleIdentifier,
+        executableExists: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+    ) -> RouteBarSettings {
+        // Label 从 bundle id 派生：写死成某个作者的名字，别人装上之后
+        // 会看到一个与自己无关的服务标识，还得手工改掉才不别扭。
+        let label = "\(bundleIdentifier ?? "com.liuyude.RouteBar").sing-box"
+        let binary = singBoxSearchPaths.first(where: executableExists) ?? singBoxSearchPaths[0]
         return RouteBarSettings(
-            singBoxBinaryPath: "/opt/homebrew/bin/sing-box",
+            singBoxBinaryPath: binary,
             singBoxConfigPath: home.appendingPathComponent(".config/sing-box/surge-vless.json").path,
             singBoxLogPath: home.appendingPathComponent(".config/sing-box/surge-vless.log").path,
             singBoxErrorLogPath: home.appendingPathComponent(".config/sing-box/surge-vless-error.log").path,

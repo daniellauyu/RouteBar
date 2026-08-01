@@ -320,6 +320,22 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - LaunchAgent
+
+    func launchAgentState() async -> LaunchAgentState {
+        await coordinator.launchAgentState()
+    }
+
+    func launchAgentPreview() async -> String {
+        await coordinator.launchAgentPreview()
+    }
+
+    func installLaunchAgent(allowOverwritingForeignFile: Bool) async {
+        apply(await coordinator.installLaunchAgent(allowOverwritingForeignFile: allowOverwritingForeignFile),
+              alertOnError: true)
+        await refreshLogs()
+    }
+
     func createRequiredDirectories() {
         Task { apply(await coordinator.createRequiredDirectories(), alertOnError: true) }
     }
