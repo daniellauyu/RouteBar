@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import RouteBarCore
+@testable import RouteBarDomain
 
 struct ConfigurationGeneratorTests {
     private func makeNode(_ name: String, _ server: String) -> ProxyNode {

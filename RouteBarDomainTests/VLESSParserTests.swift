@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import RouteBarCore
+@testable import RouteBarDomain
 
 struct VLESSParserTests {
     private let sourceID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
@@ -68,7 +68,7 @@ struct SchedulingTests {
         #expect(!record.isStale(at: now, maximumAge: 700))
     }
 
-    @Test func summaryCountsEnabledSubscriptionsMergedNodesAndFailures() {
+    @Test func viewStateCountsEnabledSubscriptionsMergedNodesAndFailures() {
         let source = UUID(uuidString: "00000000-0000-0000-0000-000000000010")!
         let firstNode = ProxyNode(id: "a", name: "A", server: "a.example.com", serverPort: 443,
                                   uuid: UUID().uuidString, flow: "xtls-rprx-vision",
@@ -84,16 +84,35 @@ struct SchedulingTests {
         let failed = SubscriptionRecord(name: "Failed", isEnabled: true, status: .failed)
         let disabled = SubscriptionRecord(name: "Disabled", isEnabled: false, status: .disabled, nodes: [firstNode])
 
-        let summary = RouteBarSummary(subscriptions: [active, failed, disabled])
+        let state = AppViewState(
+            subscriptions: [active, failed, disabled],
+            serviceState: .running,
+            environment: RouteBarEnvironmentReport(paths: RuntimePaths()) { _ in true },
+            settings: RouteBarSettings.defaults(),
+            autoUpdatePaused: false
+        )
 
-        #expect(summary.totalSubscriptions == 3)
-        #expect(summary.enabledSubscriptions == 2)
-        #expect(summary.rawNodes == 3)
-        #expect(summary.mergedNodes == 2)
-        #expect(summary.enabledNodes == 1)
-        #expect(summary.disabledNodes == 1)
-        #expect(summary.testedNodes == 2)
-        #expect(summary.failedLatencyNodes == 1)
-        #expect(summary.failedSubscriptions == 1)
+        #expect(state.subscriptions.count == 3)
+        #expect(state.enabledSubscriptionCount == 2)
+        // 被禁用订阅里的节点不计入合并结果，但仍算进「原始节点数」。
+        #expect(state.rawNodeCount == 3)
+        #expect(state.mergedNodes.count == 2)
+        #expect(state.enabledNodes.count == 1)
+        #expect(state.testedNodeCount == 2)
+        #expect(state.failedLatencyCount == 1)
+        #expect(state.failedSubscriptionCount == 1)
+    }
+
+    @Test func overallStatusFlagsHealthIssuesBeforeReportingRunning() {
+        let environment = RouteBarEnvironmentReport(paths: RuntimePaths()) { _ in true }
+        // 服务在跑，但一个订阅都没有：这仍然不是「运行正常」。
+        let empty = AppViewState(subscriptions: [], serviceState: .running, environment: environment,
+                                 settings: RouteBarSettings.defaults(), autoUpdatePaused: false)
+        #expect(empty.overall == .needsAttention)
+
+        let failing = AppViewState(subscriptions: [], serviceState: .failed("last exit code 1"),
+                                   environment: environment, settings: RouteBarSettings.defaults(),
+                                   autoUpdatePaused: false)
+        #expect(failing.overall == .failed)
     }
 }

@@ -1,7 +1,25 @@
 import Foundation
 
+/// 一次生成的产物：端口映射、sing-box 配置、Surge [Proxy] 段。
+public struct GeneratedConfiguration: Sendable {
+    public let nodes: [PortMappedNode]
+    public let singBoxJSON: Data
+    public let surgeProxySection: String
+
+    public nonisolated init(nodes: [PortMappedNode], singBoxJSON: Data, surgeProxySection: String) {
+        self.nodes = nodes
+        self.singBoxJSON = singBoxJSON
+        self.surgeProxySection = surgeProxySection
+    }
+}
+
+/// 把启用节点编译成「一节点一本地端口」的 sing-box 配置，并给出对应的 Surge 代理段。
+///
+/// 为什么一个节点开一个入站而不是用 sing-box 自己的选择器：分流决策留在 Surge 里做。
+/// Surge 看到的是一组普通 SOCKS5 代理，规则、策略组、测速都用它原生那一套；
+/// sing-box 只负责把某个本地端口的流量按 Reality 送出去，两边职责不重叠。
 public enum ConfigurationGenerator {
-    public static func generate(nodes: [ProxyNode], startingPort: Int = 7701) throws -> GeneratedConfiguration {
+    public nonisolated static func generate(nodes: [ProxyNode], startingPort: Int = 7701) throws -> GeneratedConfiguration {
         let enabled = NodeCatalog.merge(nodes.filter(\.isEnabled))
         let mapped = enabled.enumerated().map { PortMappedNode(node: $0.element, localPort: startingPort + $0.offset) }
 
@@ -21,6 +39,7 @@ public enum ConfigurationGenerator {
                 ],
             ]
         }
+        // 入站与出站一一绑定：第 N 个端口只走第 N 个节点，绝不串台。
         let rules: [[String: Any]] = mapped.indices.map { index in
             ["inbound": [tag("in", index)], "action": "route", "outbound": tag("out", index),
              "udp_disable_domain_unmapping": true]
@@ -39,42 +58,18 @@ public enum ConfigurationGenerator {
                                       surgeProxySection: "[Proxy]\n" + proxyLines.joined(separator: "\n") + "\n")
     }
 
-    private static func tag(_ prefix: String, _ index: Int) -> String {
+    private nonisolated static func tag(_ prefix: String, _ index: Int) -> String {
         "\(prefix)-routebar-\(String(format: "%02d", index + 1))"
     }
 
-    private static func surgeName(_ index: Int, _ name: String) -> String {
+    /// Surge 代理名。
+    ///
+    /// 逗号、等号、引号和换行在 Surge 配置里是语法字符，节点名里带这些会把整行拆坏，
+    /// 因此一律替换成空格。前缀编号保证同名节点不会互相覆盖。
+    private nonisolated static func surgeName(_ index: Int, _ name: String) -> String {
         let safe = name.replacingOccurrences(of: "[,=\"'\\r\\n]", with: " ", options: .regularExpression)
             .replacingOccurrences(of: "  +", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespaces)
         return "RouteBar \(String(format: "%02d", index + 1)) - \(safe)"
-    }
-}
-
-public enum SurgeProfileUpdater {
-    public static func update(_ profile: String, with generated: GeneratedConfiguration) throws -> String {
-        guard let proxyStart = profile.range(of: "[Proxy]"),
-              let groupStart = profile.range(of: "[Proxy Group]", range: proxyStart.upperBound..<profile.endIndex) else {
-            throw UpdateError.missingSection
-        }
-        var result = profile
-        result.replaceSubrange(proxyStart.lowerBound..<groupStart.lowerBound, with: generated.surgeProxySection + "\n")
-        let names = generated.surgeProxySection.components(separatedBy: .newlines)
-            .filter { $0.hasPrefix("RouteBar ") }
-            .compactMap { $0.components(separatedBy: " = ").first }
-            .map { "\"\($0)\"" }.joined(separator: ", ")
-        let regex = try NSRegularExpression(pattern: #"(?m)^sing-box 节点\s*=.*$"#)
-        if let match = regex.firstMatch(in: result, range: NSRange(result.startIndex..., in: result)),
-           let range = Range(match.range, in: result) {
-            result.replaceSubrange(range, with: "sing-box 节点 = select, \(names)")
-        } else if let groups = result.range(of: "[Proxy Group]\n") {
-            result.insert(contentsOf: "sing-box 节点 = select, \(names)\n", at: groups.upperBound)
-        }
-        return result
-    }
-
-    public enum UpdateError: LocalizedError {
-        case missingSection
-        public var errorDescription: String? { "Surge 配置缺少 [Proxy] 或 [Proxy Group] 段" }
     }
 }

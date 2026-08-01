@@ -1,106 +1,99 @@
 import AppKit
 import SwiftUI
 
+/// 只负责把 Dock 图标偏好落到激活策略上。
+///
+/// 进程按 `LSUIElement` 以 `.accessory` 起步（见 `DockIconVisibility`），所以这里做的是
+/// 「需要图标时提升为 `.regular`」，隐藏模式下什么都不用改。
+///
+/// 放在 `applicationDidFinishLaunching` 而不是 SwiftUI 的 `.task`：后者要等窗口开始渲染才触发，
+/// 显示模式下会看到图标姗姗来迟。
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        DockIconVisibility.applyStoredPreference()
+    }
+
+    /// 每次「重新打开」都要再套用一遍偏好，否则策略会被系统改回 Info.plist 里的样子。
+    ///
+    /// 应用已经在跑时又从 Spotlight / Finder / `open` 打开一次，LaunchServices 会按
+    /// **Info.plist** 重新登记这个进程，运行时设过的策略被覆盖掉：显示模式下图标会凭空消失。
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        DockIconVisibility.applyStoredPreference()
+        return true
+    }
+}
+
 @main
 struct RouteBarApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
+    @StateObject private var runtimeLog = RuntimeLog.shared
     @Environment(\.scenePhase) private var scenePhase
-    @NSApplicationDelegateAdaptor(SnapshotDelegate.self) private var snapshotDelegate
+    @AppStorage("appearance") private var appearanceRaw = AppAppearance.system.rawValue
+    @AppStorage("defaultWindowSize") private var defaultWindowSizeRaw = DefaultWindowSize.small.rawValue
+    @AppStorage("customWindowWidth") private var customWindowWidth = 1_180.0
+    @AppStorage("customWindowHeight") private var customWindowHeight = 760.0
+
+    private var appearance: AppAppearance { AppAppearance.resolve(appearanceRaw) }
+    private var defaultWindowDimensions: WindowDimensions {
+        DefaultWindowSize.resolve(defaultWindowSizeRaw)
+            .dimensions(custom: WindowDimensions(width: customWindowWidth, height: customWindowHeight))
+    }
 
     var body: some Scene {
-        WindowGroup(id: "manager") {
+        // 用 Window 而不是 WindowGroup：RouteBar 管的是一份全局状态，开出两个一模一样的
+        // 窗口只会让人分不清哪个是当前的。固定 id 也让菜单栏的「打开 RouteBar」有明确目标。
+        Window("RouteBar", id: "main") {
             ContentView()
+                .frame(minWidth: 900, minHeight: 600)
                 .environmentObject(model)
-                .preferredColorScheme(ProcessInfo.processInfo.environment["ROUTEBAR_SNAPSHOT"] == "1" ? .light : nil)
+                .environmentObject(runtimeLog)
+                .preferredColorScheme(appearance.colorScheme)
+                .task { await model.bootstrap() }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { model.appBecameActive() }
                 }
                 .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in
+                    // 睡眠期间订阅可能已到期，launchctl 状态也可能变了。
                     model.appBecameActive()
                 }
+                .background(DefaultWindowSizeApplier(dimensions: defaultWindowDimensions) {
+                    model.updateWindowDimensions($0)
+                })
+                .alert("RouteBar", isPresented: Binding(
+                    get: { model.alertMessage != nil },
+                    set: { if !$0 { model.alertMessage = nil } }
+                )) {
+                    Button("好") { model.alertMessage = nil }
+                } message: {
+                    Text(model.alertMessage ?? "")
+                }
         }
-        .defaultSize(width: 1380, height: 820)
+        .defaultSize(width: defaultWindowDimensions.width, height: defaultWindowDimensions.height)
         .commands { CommandGroup(replacing: .newItem) { } }
 
-        MenuBarExtra("RouteBar", systemImage: menuIcon) {
-            RouteBarMenu().environmentObject(model)
+        Settings {
+            // ⌘, 设置窗口与侧栏「通用」页共用同一视图，避免两套界面发散。
+            SettingsLandingView()
+                .frame(width: 560, height: 620)
+                .environmentObject(model)
+                .preferredColorScheme(appearance.colorScheme)
         }
-        .menuBarExtraStyle(.menu)
+
+        MenuBarExtra("RouteBar", systemImage: menuBarSymbol) {
+            MenuBarView()
+                .environmentObject(model)
+                .preferredColorScheme(appearance.colorScheme)
+        }
+        .menuBarExtraStyle(.window)
     }
 
-    private var menuIcon: String {
-        if case .running = model.serviceState { "point.3.connected.trianglepath.dotted" }
-        else { "point.3.filled.connected.trianglepath.dotted" }
-    }
-}
-
-#if DEBUG
-final class SnapshotDelegate: NSObject, NSApplicationDelegate {
-    private var snapshotWindow: NSWindow?
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        guard ProcessInfo.processInfo.environment["ROUTEBAR_SNAPSHOT"] == "1" else { return }
-        NSApp.appearance = NSAppearance(named: .aqua)
-        let controller = NSHostingController(rootView: ContentView().environmentObject(AppModel()).environment(\.colorScheme, .light))
-        let snapshotWindow = NSWindow(contentViewController: controller)
-        snapshotWindow.setContentSize(NSSize(width: 1380, height: 820))
-        snapshotWindow.center()
-        snapshotWindow.orderFrontRegardless()
-        self.snapshotWindow = snapshotWindow
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            guard let window = self.snapshotWindow else { return }
-            window.orderFrontRegardless()
-            window.isOpaque = true
-            window.backgroundColor = .windowBackgroundColor
-            window.contentView?.wantsLayer = true
-            window.contentView?.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-            guard let view = window.contentView,
-                  let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
-            view.cacheDisplay(in: view.bounds, to: bitmap)
-            try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/private/tmp/routebar-app.png"))
-            NSApp.terminate(nil)
+    /// 菜单栏图标按整体状态区分：菜单栏是单色的，只能靠形状差异传达状态，颜色在这里没用。
+    private var menuBarSymbol: String {
+        switch model.overall {
+        case .running: "point.3.filled.connected.trianglepath.dotted"
+        case .stopped: "point.3.connected.trianglepath.dotted"
+        case .needsAttention, .failed: "exclamationmark.triangle.fill"
         }
-    }
-}
-#endif
-
-private struct RouteBarMenu: View {
-    @EnvironmentObject private var model: AppModel
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        Text(serviceTitle)
-        Text("\(model.subscriptions.count) 个订阅 · \(model.mergedNodes.count) 个节点")
-        if let next = model.nextUpdateDate {
-            Text("下次更新：\(next.formatted(date: .omitted, time: .shortened))")
-        } else if model.autoUpdatePaused {
-            Text("自动更新已暂停")
-        }
-        Divider()
-        Button("更新全部", systemImage: "arrow.clockwise") { Task { await model.updateAll() } }
-            .disabled(model.isUpdating)
-        Button(model.autoUpdatePaused ? "恢复自动更新" : "暂停自动更新",
-               systemImage: model.autoUpdatePaused ? "play.circle" : "pause.circle") {
-            model.toggleAutoUpdate()
-        }
-        if case .running = model.serviceState {
-            Button("停止 sing-box", systemImage: "stop.fill") { model.stopService() }
-        } else {
-            Button("启动 sing-box", systemImage: "play.fill") { model.restartService() }
-        }
-        Button("刷新状态", systemImage: "checklist") { model.refreshRuntimeArtifacts() }
-        Divider()
-        Button("打开错误日志", systemImage: "doc.text") { model.openRuntimePath(model.runtimePaths.singBoxErrorLog) }
-        Button("定位配置文件", systemImage: "folder") { model.revealRuntimePath(model.runtimePaths.singBoxConfig) }
-        Button("打开 RouteBar", systemImage: "macwindow") {
-            openWindow(id: "manager")
-            NSApp.activate(ignoringOtherApps: true)
-        }
-        Divider()
-        Button("退出 RouteBar", systemImage: "power") { NSApp.terminate(nil) }
-    }
-
-    private var serviceTitle: String {
-        switch model.serviceState { case .running: "sing-box 运行中"; case .stopped: "sing-box 已停止"; case .failed: "sing-box 状态异常" }
     }
 }
