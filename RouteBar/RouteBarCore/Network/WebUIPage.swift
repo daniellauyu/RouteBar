@@ -93,7 +93,13 @@ enum WebUIPage {
       }
       #toast.show { opacity: .95; }
       form.add { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; margin-top: 12px; }
-      @media (max-width: 620px) { form.add { grid-template-columns: 1fr; } }
+      .editor {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0;
+      }
+      .field { display: flex; flex-direction: column; gap: 4px; }
+      @media (max-width: 620px) {
+        form.add, .editor { grid-template-columns: 1fr; }
+      }
     </style>
     </head>
     <body>
@@ -185,6 +191,8 @@ enum WebUIPage {
     const API = '/' + TOKEN + '/api';
     const $ = (id) => document.getElementById(id);
     let snapshot = null, busy = false;
+    // 正在编辑的订阅 id。轮询期间要避开它，否则 8 秒一到就把用户填了一半的表单刷掉。
+    let editingId = null;
 
     function toast(text) {
       const el = $('toast');
@@ -284,15 +292,25 @@ enum WebUIPage {
         container.replaceChildren(element('div', 'dim', '还没有订阅，在下面添加一个。'));
         return;
       }
+      // 打开的编辑器所属订阅已被删除时，关掉它，免得留在一个不存在的对象上。
+      if (editingId && !list.some((s) => s.id === editingId)) editingId = null;
+
       container.replaceChildren(...list.map((sub, index) => {
+        if (sub.id === editingId) return subscriptionEditor(sub, index);
+
         const item = element('div', 'item row between' + (sub.enabled ? '' : ' off'));
         item.append(element('span', 'idx', String(index + 1)));
         const left = element('div', 'grow');
         left.append(element('div', null, sub.name));
-        const meta = [sub.statusLabel, sub.nodeCount + ' 个节点', relative(sub.updatedAt)];
+        const meta = [sub.statusLabel, sub.nodeCount + ' 个节点', relative(sub.updatedAt),
+                      '每 ' + sub.updateIntervalHours + ' 小时'];
+        if (sub.note) meta.push(sub.note);
         if (sub.lastError) meta.push(sub.lastError);
         left.append(element('div', 'dim', meta.join(' · ')));
         const right = element('div', 'row');
+
+        const edit = element('button', null, '编辑');
+        edit.onclick = () => { editingId = sub.id; renderSubscriptions(list); };
 
         const toggle = element('button', null, sub.enabled ? '停用' : '启用');
         toggle.onclick = () => act('/subscriptions/' + sub.id + '/enabled', 'POST', { enabled: !sub.enabled });
@@ -307,10 +325,77 @@ enum WebUIPage {
           }
         };
 
-        right.append(update, toggle, remove);
+        right.append(update, edit, toggle, remove);
         item.append(left, right);
         return item;
       }));
+    }
+
+    function labelled(text, input) {
+      const wrap = element('label', 'field');
+      wrap.append(element('span', 'dim', text), input);
+      return wrap;
+    }
+
+    function subscriptionEditor(sub, index) {
+      const box = element('div', 'item');
+      const head = element('div', 'row');
+      head.append(element('span', 'idx', String(index + 1)),
+                  element('div', 'grow', '编辑「' + sub.name + '」'));
+      box.append(head);
+
+      const name = element('input');
+      name.value = sub.name;
+      name.required = true;
+
+      const url = element('input');
+      url.type = 'url';
+      // 存下来的地址含机场凭据，只在钥匙串里，网页从不显示它。
+      // 因此空值只能理解成「不改」，不能当成「清空」。
+      url.placeholder = '留空则保持当前地址不变';
+
+      const note = element('input');
+      note.value = sub.note || '';
+      note.placeholder = '可选';
+
+      const interval = element('input');
+      interval.type = 'number';
+      interval.min = '1';
+      interval.max = '168';
+      interval.value = String(sub.updateIntervalHours);
+
+      const grid = element('div', 'editor');
+      grid.append(labelled('名称', name), labelled('订阅地址', url),
+                  labelled('备注', note), labelled('更新间隔（小时）', interval));
+      box.append(grid);
+
+      const save = element('button', 'primary', '保存');
+      save.onclick = async () => {
+        const payload = {
+          id: sub.id,
+          name: name.value.trim(),
+          note: note.value.trim(),
+          intervalHours: Math.min(168, Math.max(1, parseInt(interval.value, 10) || sub.updateIntervalHours)),
+        };
+        if (!payload.name) { toast('名称不能为空'); return; }
+        const typed = url.value.trim();
+        if (typed) payload.url = typed;
+        const data = await call('/subscriptions', 'POST', payload);
+        if (data) {
+          editingId = null;
+          render(data);
+          toast('已保存，正在重新拉取节点…');
+        }
+      };
+
+      const cancel = element('button', null, '取消');
+      cancel.onclick = () => { editingId = null; renderSubscriptions(snapshot.subscriptions); };
+
+      const actions = element('div', 'row');
+      actions.append(save, cancel);
+      actions.append(element('span', 'dim', '保存后会立即重新拉取这条订阅的节点。'));
+      box.append(actions);
+      return box;
     }
 
     function renderNodes(nodes) {
@@ -394,7 +479,8 @@ enum WebUIPage {
 
     refresh();
     // 定时轮询，好让菜单栏应用里做的改动、以及后台的定时更新都能反映到页面上。
-    setInterval(() => { if (!busy) refresh(); }, 8000);
+    // 编辑器开着时跳过——重绘会把填了一半的表单连同光标位置一起丢掉。
+    setInterval(() => { if (!busy && !editingId) refresh(); }, 8000);
     </script>
     </body>
     </html>
