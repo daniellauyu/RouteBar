@@ -167,18 +167,24 @@ def print_status(data):
 
 
 def print_nodes(data, keyword=None):
-    nodes = data["nodes"]
+    """列出节点。
+
+    序号是节点在**完整列表**里的位置，筛选时保留原号（会跳号）而不是重新从 1 排。
+    重排的话 `routebar nodes 韓國` 显示的「1」和 `routebar test 1` 解析出的节点
+    就不是同一个——序号必须指向节点本身，不能只是行号。
+    """
+    nodes = list(enumerate(data["nodes"], 1))
     if keyword:
         needle = keyword.lower()
-        nodes = [n for n in nodes
+        nodes = [(i, n) for i, n in nodes
                  if needle in n["name"].lower() or needle in n["server"].lower()]
     if not nodes:
         print(dim("没有匹配的节点。"))
         return
 
-    width = max(display_width(n["name"]) for n in nodes)
-    latency_width = max(display_width(latency_plain(n)) for n in nodes)
-    for index, node in enumerate(nodes, 1):
+    width = max(display_width(n["name"]) for _, n in nodes)
+    latency_width = max(display_width(latency_plain(n)) for _, n in nodes)
+    for index, node in nodes:
         flag = " " if node["enabled"] else dim("×")
         port = str(node["localPort"]).rjust(5) if node["localPort"] else "    —"
         name = node["name"] if node["enabled"] else dim(node["name"])
@@ -188,6 +194,7 @@ def print_nodes(data, keyword=None):
 
 
 def print_subscriptions(data):
+    # 订阅列表不做筛选，序号与 resolve() 用的位置天然一致。
     subs = data["subscriptions"]
     if not subs:
         print(dim("还没有订阅。用 `routebar add <名称> <地址>` 添加。"))

@@ -71,7 +71,9 @@ struct NodesView: View {
             } else {
                 List(selection: $model.selectedNodeID) {
                     ForEach(filteredNodes) { item in
-                        NodeRow(item: item, source: sourceName(for: item.node))
+                        NodeRow(item: item,
+                                number: nodeNumbers[item.node.id],
+                                source: sourceName(for: item.node))
                             .tag(Optional(item.node.id))
                     }
                 }
@@ -161,6 +163,19 @@ struct NodesView: View {
         .background(.bar)
     }
 
+    // MARK: - 序号
+
+    /// 节点编号：在**完整节点列表**（去重后按名称排序）里的位置。
+    ///
+    /// 不用列表行号，因为这一页可以改排序和筛选——行号会随之变化，说「第 5 个」就没有意义了。
+    /// 按完整列表定位则三处一致：窗口、网页、`routebar test 5` 指的是同一个节点。
+    ///
+    /// 这一页只列启用节点（`mappedNodes` 已过滤），所以有节点被停用时编号会跳号——
+    /// 那是对的，编号属于节点，不属于它此刻排第几行。
+    private var nodeNumbers: [String: Int] {
+        Dictionary(uniqueKeysWithValues: model.mergedNodes.enumerated().map { ($0.element.id, $0.offset + 1) })
+    }
+
     // MARK: - 筛选
 
     private var regions: [String] {
@@ -211,10 +226,16 @@ struct NodesView: View {
 private struct NodeRow: View {
     @EnvironmentObject private var model: AppModel
     let item: PortMappedNode
+    let number: Int?
     let source: String
 
     var body: some View {
         HStack(spacing: 12) {
+            Text(number.map(String.init) ?? "–")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.tertiary)
+                .frame(width: 26, alignment: .trailing)
+
             Toggle("", isOn: Binding(
                 get: { item.node.isEnabled },
                 set: { model.setNodeEnabled($0, id: item.node.id) }

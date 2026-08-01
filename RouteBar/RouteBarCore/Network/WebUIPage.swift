@@ -78,6 +78,10 @@ enum WebUIPage {
       .lat.slow { color: var(--bad); } .lat.failed { color: var(--bad); }
       .lat.untested { color: var(--dim); }
       .off { opacity: .45; }
+      .idx {
+        flex: none; width: 26px; text-align: right; color: var(--dim);
+        font-size: 12px; font-variant-numeric: tabular-nums;
+      }
       .health { color: var(--warn); font-size: 13px; padding: 3px 0; }
       .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 12px; }
       .metric b { display: block; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -280,8 +284,9 @@ enum WebUIPage {
         container.replaceChildren(element('div', 'dim', '还没有订阅，在下面添加一个。'));
         return;
       }
-      container.replaceChildren(...list.map((sub) => {
+      container.replaceChildren(...list.map((sub, index) => {
         const item = element('div', 'item row between' + (sub.enabled ? '' : ' off'));
+        item.append(element('span', 'idx', String(index + 1)));
         const left = element('div', 'grow');
         left.append(element('div', null, sub.name));
         const meta = [sub.statusLabel, sub.nodeCount + ' 个节点', relative(sub.updatedAt)];
@@ -310,6 +315,10 @@ enum WebUIPage {
 
     function renderNodes(nodes) {
       const keyword = $('filter').value.trim().toLowerCase();
+      // 序号取自完整列表中的位置，筛选时保留原号而不是重新从 1 排。
+      // 重排的话网页上的「4」和 `routebar test 4` 就不是同一个节点——
+      // 序号要指向节点本身，不能只是行号。
+      const order = new Map(nodes.map((node, index) => [node.id, index + 1]));
       const visible = keyword
         ? nodes.filter((n) => n.name.toLowerCase().includes(keyword) || n.server.toLowerCase().includes(keyword))
         : nodes;
@@ -322,6 +331,7 @@ enum WebUIPage {
       }
       container.replaceChildren(...visible.map((node) => {
         const item = element('div', 'item row between' + (node.enabled ? '' : ' off'));
+        item.append(element('span', 'idx', String(order.get(node.id))));
         const left = element('div', 'grow');
         left.append(element('div', null, node.name));
         const meta = element('div', 'dim');
