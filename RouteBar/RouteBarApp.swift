@@ -89,20 +89,14 @@ struct RouteBarApp: App {
                 .preferredColorScheme(appearance.colorScheme)
         }
 
-        MenuBarExtra("RouteBar", systemImage: menuBarSymbol) {
+        MenuBarExtra {
             MenuBarView()
                 .environmentObject(model)
                 .preferredColorScheme(appearance.colorScheme)
+        } label: {
+            Image("MenuBarIcon")
+                .accessibilityLabel("RouteBar")
         }
         .menuBarExtraStyle(.window)
-    }
-
-    /// 菜单栏图标按整体状态区分：菜单栏是单色的，只能靠形状差异传达状态，颜色在这里没用。
-    private var menuBarSymbol: String {
-        switch model.overall {
-        case .running: "point.3.filled.connected.trianglepath.dotted"
-        case .stopped: "point.3.connected.trianglepath.dotted"
-        case .needsAttention, .failed: "exclamationmark.triangle.fill"
-        }
     }
 }

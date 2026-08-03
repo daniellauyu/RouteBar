@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.7.1
+
+换掉应用图标与菜单栏图标。
+
+- AppIcon 补齐 16/32/128/256/512 五档的 1x 与 2x（共 10 个槽位，@2x 复用上一档的大图）。
+- 菜单栏图标改用自带的 `MenuBarIcon` 模板图（18/36/54，灰度带 alpha，
+  `template-rendering-intent` 为 template，跟随浅色/深色自动反色）。
+- **菜单栏图标不再按状态换形状**：原来 running / stopped / needsAttention 各用一个
+  SF Symbol，现在固定一个图形。状态仍可从图标点开的面板与主窗口看到。
+
 ## v1.7.0
 
 输出给 Surge 的节点名不再写死成 `RouteBar 01 - …`，改成可配置的模板：全局一条，
