@@ -123,6 +123,8 @@ final class AppModel: ObservableObject {
     var failedLatencyCount: Int { state?.failedLatencyCount ?? 0 }
     var failedSubscriptionCount: Int { state?.failedSubscriptionCount ?? 0 }
     var runtimePaths: RuntimePaths { runtimePathsCache }
+    /// 当前生效的节点命名规则。与写进 Surge 配置的那一份同源（都出自快照）。
+    var nodeNaming: NodeNaming { state?.nodeNaming ?? .default }
 
     var filteredSubscriptions: [SubscriptionRecord] {
         guard !subscriptionSearchText.isEmpty else { return subscriptions }
@@ -160,20 +162,24 @@ final class AppModel: ObservableObject {
         await coordinator.subscriptionURL(for: subscription.id)
     }
 
-    func saveSubscription(id: UUID?, name: String, url: String, note: String, interval: Int) {
+    func saveSubscription(id: UUID?, name: String, url: String, note: String, interval: Int,
+                          nodeNameTemplate: String? = nil) {
         Task {
             do {
-                try await saveSubscriptionAsync(id: id, name: name, url: url, note: note, interval: interval)
+                try await saveSubscriptionAsync(id: id, name: name, url: url, note: note,
+                                                interval: interval, nodeNameTemplate: nodeNameTemplate)
             } catch {
                 alertMessage = error.localizedDescription
             }
         }
     }
 
-    func saveSubscriptionAsync(id: UUID?, name: String, url: String, note: String, interval: Int) async throws {
+    func saveSubscriptionAsync(id: UUID?, name: String, url: String, note: String, interval: Int,
+                               nodeNameTemplate: String? = nil) async throws {
         do {
             let savedID = try await coordinator.saveSubscription(id: id, name: name, url: url,
-                                                                 note: note, interval: interval)
+                                                                 note: note, interval: interval,
+                                                                 nodeNameTemplate: nodeNameTemplate)
             selectedSubscriptionID = savedID
             log.notice("订阅", "已保存订阅「\(name)」")
             await runUpdates([savedID], regenerateAfter: true, initiatedByUser: true)
@@ -344,14 +350,22 @@ final class AppModel: ObservableObject {
     // MARK: - 设置
 
     func saveSettings(_ newSettings: RouteBarSettings) {
-        Task {
-            apply(await coordinator.saveSettings(newSettings), alertOnError: true)
-            runtimePathsCache = await coordinator.paths
-            // 端口、令牌或输出方式可能都变了，让服务按新设置重来一遍。
-            await server.stop()
-            await syncServer()
-            await refreshLogs()
-        }
+        Task { await saveSettingsAsync(newSettings) }
+    }
+
+    /// 可等待的版本：HTTP 请求要等设置真正落盘之后才能回快照。
+    func saveSettingsAsync(_ newSettings: RouteBarSettings) async {
+        let previous = settings
+        apply(await coordinator.saveSettings(newSettings), alertOnError: true)
+        runtimePathsCache = await coordinator.paths
+        // 只在监听参数真的变了时才重起服务。无条件重起的话，从网页改一个与服务无关的
+        // 设置（比如节点命名）会把正在响应这次请求的那个监听器一起拆掉。
+        let listenerChanged = previous.subscriptionPort != newSettings.subscriptionPort
+            || previous.subscriptionToken != newSettings.subscriptionToken
+            || previous.surgeOutputMode != newSettings.surgeOutputMode
+        if listenerChanged { await server.stop() }
+        await syncServer()
+        await refreshLogs()
     }
 
     // MARK: - 本地服务（订阅地址 + Web 界面）
@@ -484,12 +498,16 @@ extension AppModel: RouteBarAPIHost {
     func apiSnapshot() async -> APISnapshot {
         // 服务器可能在窗口没打开时被访问，顺手刷新一次监听状态。
         await refreshSubscriptionStatus()
-        let current = state ?? AppViewState(subscriptions: [], serviceState: .stopped,
-                                            environment: RouteBarEnvironmentReport(paths: runtimePaths) { _ in false },
-                                            settings: settings, autoUpdatePaused: false)
-        return APISnapshot(state: current,
+        return APISnapshot(state: currentViewState,
                            subscriptionServing: subscriptionServing,
                            subscriptionError: subscriptionError)
+    }
+
+    /// 引擎还没产出过快照时（窗口从未打开）兜一份空状态，API 不至于 500。
+    private var currentViewState: AppViewState {
+        state ?? AppViewState(subscriptions: [], serviceState: .stopped,
+                              environment: RouteBarEnvironmentReport(paths: runtimePaths) { _ in false },
+                              settings: settings, autoUpdatePaused: false)
     }
 
     /// Surge 要拉的策略集。
@@ -497,7 +515,7 @@ extension AppModel: RouteBarAPIHost {
     /// 按请求现算，不缓存字符串：缓存的那一份会在「配置未变化、跳过安装」这条分支上
     /// 停留在上一轮的内容。快照里的端口映射与即将写进 sing-box 的编号同源，现算永远对得上。
     func apiPolicyList() async -> String {
-        ConfigurationGenerator.surgePolicyLines(mappedNodes)
+        ConfigurationGenerator.surgePolicyLines(mappedNodes, naming: nodeNaming)
     }
 
     func apiSaveSubscription(_ input: APISubscriptionInput) async throws {
@@ -518,7 +536,19 @@ extension AppModel: RouteBarAPIHost {
                                         name: input.name.trimmingCharacters(in: .whitespaces),
                                         url: url,
                                         note: input.note ?? existing?.note ?? "",
-                                        interval: input.intervalHours ?? existing?.updateIntervalHours ?? 6)
+                                        interval: input.intervalHours ?? existing?.updateIntervalHours ?? 6,
+                                        nodeNameTemplate: input.nodeNameTemplate)
+    }
+
+    /// 全局模板走设置：它和端口、输出方式一样是应用级配置，存在 settings.json 里。
+    func apiSetNodeNameTemplate(_ template: String) async {
+        var updated = settings
+        updated.nodeNameTemplate = NodeNaming.normalized(template)
+        await saveSettingsAsync(updated)
+    }
+
+    func apiPreviewNodeNames(_ template: String) async -> APINamingPreview {
+        APINamingPreview(state: currentViewState, template: template)
     }
 
     func apiDeleteSubscription(_ id: UUID) async { await deleteSubscription(id) }

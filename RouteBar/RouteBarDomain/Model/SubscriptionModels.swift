@@ -39,10 +39,17 @@ public struct SubscriptionRecord: Codable, Identifiable, Hashable, Sendable {
     public var status: SubscriptionStatus
     public var lastError: String?
     public var nodes: [ProxyNode]
+    /// 这条订阅的节点名模板，覆盖全局的 `RouteBarSettings.nodeNameTemplate`。
+    ///
+    /// nil 或空串都表示「跟随全局」。用 `Optional` 而不是 `String` 是为了向后兼容：
+    /// 合成的 `Codable` 对可选字段走 `decodeIfPresent`，老 state.json 里没有这个键也解得出来；
+    /// 换成非可选，一次升级就会让整份订阅列表解码失败、被静默清空。
+    public var nodeNameTemplate: String?
 
     public nonisolated init(id: UUID = UUID(), name: String, note: String = "", isEnabled: Bool = true,
                             createdAt: Date = .now, updatedAt: Date? = nil, updateIntervalHours: Int = 6,
-                            status: SubscriptionStatus = .idle, lastError: String? = nil, nodes: [ProxyNode] = []) {
+                            status: SubscriptionStatus = .idle, lastError: String? = nil, nodes: [ProxyNode] = [],
+                            nodeNameTemplate: String? = nil) {
         self.id = id
         self.name = name
         self.note = note
@@ -53,6 +60,7 @@ public struct SubscriptionRecord: Codable, Identifiable, Hashable, Sendable {
         self.status = status
         self.lastError = lastError
         self.nodes = nodes
+        self.nodeNameTemplate = nodeNameTemplate
     }
 }
 

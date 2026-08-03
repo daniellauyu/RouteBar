@@ -48,6 +48,13 @@ public struct AppViewState: Sendable {
     public let overall: OverallStatus
     public let menuBarSummary: String
 
+    /// 当前生效的节点命名规则（全局模板 + 各订阅的覆盖）。
+    ///
+    /// 生成配置和本地订阅服务都从这里取，两条路径因此不可能给同一个端口起两个名字。
+    public nonisolated var nodeNaming: NodeNaming {
+        NodeNaming(settings: settings, subscriptions: subscriptions)
+    }
+
     public nonisolated init(
         subscriptions: [SubscriptionRecord],
         serviceState: ServiceState,

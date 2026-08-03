@@ -23,6 +23,10 @@ public protocol RouteBarAPIHost: AnyObject, Sendable {
     func apiStopService() async
     func apiRefreshService() async
     func apiSetAutoUpdatePaused(_ paused: Bool) async
+    /// 改全局节点名模板（每条订阅的覆盖走 `apiSaveSubscription`）。
+    func apiSetNodeNameTemplate(_ template: String) async
+    /// 按给定模板试跑，不保存也不改任何东西。
+    func apiPreviewNodeNames(_ template: String) async -> APINamingPreview
     func apiLogs() async -> APILogs
 }
 
@@ -126,6 +130,18 @@ public struct APIRouter: Sendable {
             guard let input: APIEnabledInput = decode(request.body) else { return .badRequest }
             // 请求体里的 enabled 说的是「自动更新开着」，内部存的是「已暂停」。
             await host.apiSetAutoUpdatePaused(!input.enabled)
+            return encode(await host.apiSnapshot())
+
+        case "naming":
+            guard method == "POST" else { return .notFound }
+            guard let input: APINamingInput = decode(request.body) else { return .badRequest }
+            // 试跑是只读的，但仍走 POST：模板要放在请求体里，而且写操作那套
+            // `Content-Type: application/json` 的跨源防护对它同样适用。
+            if rest == ["preview"] {
+                return encode(await host.apiPreviewNodeNames(input.template))
+            }
+            guard rest.isEmpty else { return .notFound }
+            await host.apiSetNodeNameTemplate(input.template)
             return encode(await host.apiSnapshot())
 
         case "subscriptions":

@@ -19,6 +19,12 @@ struct SettingsLandingView: View {
     /// 不直接绑到 `latencyTestURL`：那样每敲一个字符都会写进设置，中间态（`htt`、`https:/`）
     /// 会被当成非法值回落到默认端点，选择器随即跳回预设，人还没打完就被打断了。
     @State private var customEndpoint = ""
+    /// 节点名模板的编辑缓冲。
+    ///
+    /// 同样不直接写设置：每敲一个字符都保存的话，会连着触发几十次「保存设置 + 重新生成 +
+    /// 重装 Surge 配置」，中间那些半截模板还会被真的写进配置文件。
+    @State private var nameTemplate = NodeNaming.defaultTemplate
+    @State private var showsNamePreview = false
 
     /// Picker 用来表示「自定义」的哨兵值。用一个不可能是合法 URL 的字符串，
     /// 免得和用户真填的地址撞上。
@@ -110,6 +116,52 @@ struct SettingsLandingView: View {
                             }
                             .controlSize(.small)
                         }
+                    }
+                }
+
+                settingsSection("节点命名") {
+                    settingsRow(
+                        title: "名称模板",
+                        detail: templateIsValid
+                            ? "决定这些出口在 Surge 里叫什么。改完按回车生效，会立即重新生成一次配置。"
+                            : "模板里一个占位符都没有，所有节点会拼出同一个名字——RouteBar 会自动补序号，免得它们在 Surge 里互相覆盖。",
+                        detailColor: templateIsValid ? .secondary : .orange
+                    ) {
+                        VStack(alignment: .trailing, spacing: 6) {
+                            TextField(NodeNaming.defaultTemplate, text: $nameTemplate)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 260)
+                                .onSubmit { applyNameTemplate() }
+                            HStack(spacing: 6) {
+                                // 试跑用的是输入框里的内容，不是已保存的那份——先看结果再决定要不要生效，
+                                // 否则「保存了才知道长什么样」，而保存就等于把 Surge 里的名字全改了。
+                                Button("测试") { showsNamePreview = true }
+                                Button("恢复默认") {
+                                    nameTemplate = NodeNaming.defaultTemplate
+                                    applyNameTemplate()
+                                }
+                                .disabled(model.settings.nodeNameTemplate == NodeNaming.defaultTemplate
+                                    && nameTemplate == NodeNaming.defaultTemplate)
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                    Divider()
+                    settingsRow(title: "预览", detail: placeholderHelp) {
+                        VStack(alignment: .trailing, spacing: 3) {
+                            ForEach(namePreview, id: \.self) { name in
+                                Text(name).font(.callout.monospaced()).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    Divider()
+                    settingsRow(
+                        title: "按订阅区分",
+                        detail: "在「订阅」页选中订阅点「编辑」，可以给单条订阅单独设一套模板，留空则用上面这一条。"
+                    ) {
+                        Text(overriddenSubscriptionSummary)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -247,7 +299,49 @@ struct SettingsLandingView: View {
         }
         .onAppear {
             if usesCustomEndpoint, customEndpoint.isEmpty { customEndpoint = latencyTestURL }
+            nameTemplate = model.settings.nodeNameTemplate
         }
+        // 命名规则也可能是从网页或命令行改的，回到窗口时对齐，别让输入框停在旧值上。
+        .onChange(of: model.settings.nodeNameTemplate) { _, newValue in
+            if newValue != NodeNaming.normalized(nameTemplate) { nameTemplate = newValue }
+        }
+        .sheet(isPresented: $showsNamePreview) {
+            NodeNamePreviewView(template: nameTemplate,
+                                isApplied: NodeNaming.normalized(nameTemplate) == model.settings.nodeNameTemplate,
+                                apply: applyNameTemplate)
+        }
+    }
+
+    // MARK: - 节点命名
+
+    /// 空模板会被存成默认值，不算错；这里只提醒「一个占位符都没有」的情况——
+    /// 那样全部节点会拼出同一个名字，只能靠自动补序号来避免互相覆盖。
+    private var templateIsValid: Bool {
+        NodeNaming.placeholders.contains { nameTemplate.contains($0.token) }
+    }
+
+    private var placeholderHelp: String {
+        "可用占位符：" + NodeNaming.placeholders.map { "\($0.token) \($0.summary)" }.joined(separator: "、")
+    }
+
+    private var namePreview: [String] {
+        NodeNaming.preview(template: nameTemplate,
+                           subscriptions: model.subscriptions,
+                           mapped: model.mappedNodes)
+    }
+
+    private var overriddenSubscriptionSummary: String {
+        let count = model.subscriptions.filter { !($0.nodeNameTemplate ?? "").isEmpty }.count
+        return count == 0 ? "都跟随全局" : "\(count) 条订阅另有模板"
+    }
+
+    private func applyNameTemplate() {
+        let normalized = NodeNaming.normalized(nameTemplate)
+        nameTemplate = normalized
+        guard normalized != model.settings.nodeNameTemplate else { return }
+        var updated = model.settings
+        updated.nodeNameTemplate = normalized
+        model.saveSettings(updated)
     }
 
     // MARK: - 测速端点

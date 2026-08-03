@@ -183,6 +183,9 @@ def print_nodes(data, keyword=None):
         return
 
     width = max(display_width(n["name"]) for _, n in nodes)
+    # 输出名（Surge 里看到的那个）单独一列：命名模板可配置之后它和原名可以毫无关系，
+    # 在策略组里找不到某个节点时，要对的就是这一列。
+    output_width = max(display_width(n.get("outputName") or "—") for _, n in nodes)
     latency_width = max(display_width(latency_plain(n)) for _, n in nodes)
     for index, node in nodes:
         flag = " " if node["enabled"] else dim("×")
@@ -191,7 +194,10 @@ def print_nodes(data, keyword=None):
         port = str(node["localPort"]).rjust(5) if node.get("localPort") else "    —"
         name = node["name"] if node["enabled"] else dim(node["name"])
         padding = " " * max(0, width - display_width(node["name"]))
+        output = node.get("outputName") or "—"
+        output_padding = " " * max(0, output_width - display_width(output))
         print(f"{dim(f'{index:>3}')} {flag} {name}{padding}"
+              f"  {dim('→')} {output}{output_padding}"
               f"  {dim(port)}  {latency_cell(node, latency_width)}"
               f"  {dim(node['protocolLabel'])}  {dim(node['server'])}")
 
@@ -204,8 +210,12 @@ def print_subscriptions(data):
         return
     for index, sub in enumerate(subs, 1):
         flag = " " if sub["enabled"] else dim("×")
-        print(f"{dim(f'{index:>3}')} {flag} {bold(sub['name'])}  "
-              f"{sub['nodeCount']} 个节点 · {sub['statusLabel']} · {dim(when(sub.get('updatedAt')))}")
+        line = (f"{dim(f'{index:>3}')} {flag} {bold(sub['name'])}  "
+                f"{sub['nodeCount']} 个节点 · {sub['statusLabel']} · {dim(when(sub.get('updatedAt')))}")
+        # 只在这条订阅另设了命名模板时才提一句，否则每行都跟一段重复的全局模板。
+        if sub.get("nodeNameTemplate"):
+            line += f" · {dim('命名 ' + sub['nodeNameTemplate'])}"
+        print(line)
         if sub.get("lastError"):
             print(f"      {red(sub['lastError'])}")
 
@@ -309,6 +319,60 @@ def cmd_remove(args):
     print(f"已删除「{sub['name']}」")
 
 
+def print_name_rows(rows, is_sample):
+    """打印「原名 → 输出名」对照表。"""
+    if is_sample:
+        print(dim("当前没有启用节点，下面是示例："))
+    width = max((display_width(r["name"]) for r in rows), default=0)
+    for index, row in enumerate(rows, 1):
+        padding = " " * max(0, width - display_width(row["name"]))
+        print(f"{dim(f'{index:>3}')} {row['name']}{padding}  {dim('→')}  "
+              f"{bold(row['outputName'])}  {dim(row['localPort'])}")
+
+
+def cmd_naming(args):
+    """看/试/改输出给 Surge 的节点名模板。
+
+        routebar naming                     看当前规则 + 全部节点的输出名
+        routebar naming --test '{name}'     只试跑，不保存
+        routebar naming '{index} {name}'    改成这一条（立即生效）
+
+    单条订阅的覆盖不在这里改——那是订阅的属性，从窗口或网页的订阅编辑器里设。
+    """
+    dry_run = bool(args) and args[0] in ("--test", "-t", "test")
+    if dry_run:
+        args = args[1:]
+        if not args:
+            die("用法：routebar naming --test <模板>")
+
+    template = " ".join(args)
+    if dry_run:
+        # 试跑走单独的端点：它只算不存，改坏了也不会波及正在用的配置。
+        preview = request("/api/naming/preview", "POST", {"template": template})
+        print(f"{bold('试跑模板')}  {preview['template']}  {dim('（未保存）')}")
+        print_name_rows(preview["rows"], preview["isSample"])
+        return
+
+    data = request("/api/naming", "POST", {"template": template}) if args else state()
+    naming = data["naming"]
+    print(f"{bold('全局模板')}  {naming['template']}")
+    for placeholder in naming["placeholders"]:
+        print(f"{dim('  ' + placeholder['token'].ljust(16) + placeholder['summary'])}")
+    for sub in [s for s in data["subscriptions"] if s.get("nodeNameTemplate")]:
+        print(f"{dim('订阅')} {sub['name']}  {sub['nodeNameTemplate']}")
+    if args:
+        print(dim("已保存，Surge 侧的输出已按新规则重新生成。"))
+
+    # 直接把当前全部节点的输出名列出来：这条命令的用处就是「对一下名字」。
+    rows = [{"name": n["name"], "outputName": n["outputName"], "localPort": n["localPort"]}
+            for n in data["nodes"] if n.get("outputName")]
+    if rows:
+        print()
+        print_name_rows(rows, False)
+    else:
+        print(dim(f"示例：{' · '.join(naming['preview'])}（当前没有启用节点）"))
+
+
 def cmd_regen(args):
     print(dim("重新生成配置并重启 sing-box…"))
     print_status(request("/api/regenerate", "POST"))
@@ -353,7 +417,7 @@ def cmd_help(args):
 
 {bold('查看')}
   status                  总体状态、服务、节点统计
-  nodes [关键词]          节点列表（序号 · 启用 · 本地端口 · 延迟 · 主机）
+  nodes [关键词]          节点列表（序号 · 原名 → Surge 名 · 端口 · 延迟 · 主机）
   subs                    订阅列表
   logs [runtime|error|out]  日志，默认 runtime
 
@@ -366,6 +430,11 @@ def cmd_help(args):
   test [节点]             全部测速，或指定一个
   enable <节点>           启用
   disable <节点>          停用
+
+{bold('输出')}
+  naming                  看节点名规则，并列出每个节点的输出名
+  naming --test <模板>    只试跑不保存，先看结果再决定
+  naming <模板>           改成这一条（立即生效，占位符 {{index}} {{name}} {{subscription}} {{port}}）
 
 {bold('服务')}
   start | stop | restart  起停 sing-box
@@ -390,6 +459,7 @@ COMMANDS = {
     "test": cmd_test,
     "enable": cmd_enable, "on": cmd_enable,
     "disable": cmd_disable, "off": cmd_disable,
+    "naming": cmd_naming, "name": cmd_naming,
     "regen": cmd_regen, "regenerate": cmd_regen,
     "start": cmd_start, "stop": cmd_stop, "restart": cmd_restart,
     "url": cmd_url, "surge": cmd_surge, "web": cmd_web,

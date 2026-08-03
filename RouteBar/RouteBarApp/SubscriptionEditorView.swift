@@ -8,6 +8,8 @@ struct SubscriptionEditorContext: Identifiable {
     var url = ""
     var note = ""
     var interval = 6
+    /// 空串表示跟随全局模板。
+    var nodeNameTemplate = ""
 
     init(subscription: SubscriptionRecord? = nil, url: String = "") {
         subscriptionID = subscription?.id
@@ -15,6 +17,7 @@ struct SubscriptionEditorContext: Identifiable {
         self.url = url
         note = subscription?.note ?? ""
         interval = subscription?.updateIntervalHours ?? 6
+        nodeNameTemplate = subscription?.nodeNameTemplate ?? ""
     }
 }
 
@@ -22,7 +25,9 @@ struct SubscriptionEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State var context: SubscriptionEditorContext
     @State private var revealURL = false
-    let save: (UUID?, String, String, String, Int) -> Void
+    /// 全局模板，作为「节点命名」输入框的占位提示——留空就是用它。
+    let globalNameTemplate: String
+    let save: (SubscriptionEditorContext) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -53,19 +58,24 @@ struct SubscriptionEditorView: View {
                     Text("12 小时").tag(12)
                     Text("24 小时").tag(24)
                 }
+                TextField("节点命名", text: $context.nodeNameTemplate, prompt: Text(globalNameTemplate))
+                    .help("这条订阅的节点在 Surge 里怎么命名。留空跟随「通用 → 节点命名」里的全局模板。")
             }
             .formStyle(.grouped)
 
-            Text("地址存入钥匙串，不写进 state.json。自动更新只在 RouteBar 运行时生效。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("地址存入钥匙串，不写进 state.json。自动更新只在 RouteBar 运行时生效。")
+                Text("节点命名可用：" + NodeNaming.placeholders.map(\.token).joined(separator: " "))
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
 
             HStack {
                 Spacer()
                 Button("取消") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("保存") {
-                    save(context.subscriptionID, context.name, context.url, context.note, context.interval)
+                    save(context)
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)

@@ -74,11 +74,18 @@ public struct RuntimeManager: Sendable {
         CoreLog.configuration.notice("已安装配置：\(generated.nodes.count) 个节点")
     }
 
+    /// 已安装的 sing-box 配置是否就是这一份。
+    ///
+    /// 单独拎出来是为了回答「这次改动要不要重启服务」：改节点名只动 Surge 那一侧，
+    /// 顺手重启 sing-box 等于白断一次全部连接。
+    public nonisolated func installedSingBoxConfigMatches(_ generated: GeneratedConfiguration) -> Bool {
+        (try? Data(contentsOf: paths.singBoxConfig)) == generated.singBoxJSON
+    }
+
     /// sing-box JSON 与（需要时）Surge 托管段都已经是目标内容时，不再校验、覆盖或重启。
     public nonisolated func installedConfigurationMatches(_ generated: GeneratedConfiguration,
                                                           writesSurgeProfile: Bool = true) -> Bool {
-        guard let installedJSON = try? Data(contentsOf: paths.singBoxConfig),
-              installedJSON == generated.singBoxJSON else { return false }
+        guard installedSingBoxConfigMatches(generated) else { return false }
         guard writesSurgeProfile else { return true }
         guard let profile = try? String(contentsOf: paths.surgeProfile, encoding: .utf8),
               let updatedProfile = try? SurgeProfileUpdater.update(profile, with: generated) else {

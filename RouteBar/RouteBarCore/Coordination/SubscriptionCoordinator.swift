@@ -145,16 +145,27 @@ public actor SubscriptionCoordinator {
 
     public func subscriptionURL(for id: UUID) -> String { keychain.value(for: id) ?? "" }
 
+    /// `nodeNameTemplate` 传 nil 表示「这次不动它」，传空串表示「清掉，跟随全局」。
+    /// 两者必须分开：调用方（网页表单、命令行）不一定每次都带上这个字段。
     @discardableResult
-    public func saveSubscription(id: UUID?, name: String, url: String, note: String, interval: Int) throws -> UUID {
+    public func saveSubscription(id: UUID?, name: String, url: String, note: String, interval: Int,
+                                 nodeNameTemplate: String? = nil) throws -> UUID {
         let recordID = id ?? UUID()
         try keychain.set(url, for: recordID)
+        let normalizedTemplate = nodeNameTemplate.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         if let index = subscriptions.firstIndex(where: { $0.id == recordID }) {
             subscriptions[index].name = name
             subscriptions[index].note = note
             subscriptions[index].updateIntervalHours = interval
+            if let normalizedTemplate {
+                subscriptions[index].nodeNameTemplate = normalizedTemplate.isEmpty ? nil : normalizedTemplate
+            }
         } else {
-            subscriptions.append(SubscriptionRecord(id: recordID, name: name, note: note, updateIntervalHours: interval))
+            subscriptions.append(SubscriptionRecord(
+                id: recordID, name: name, note: note, updateIntervalHours: interval,
+                nodeNameTemplate: (normalizedTemplate?.isEmpty ?? true) ? nil : normalizedTemplate))
         }
         try? persist()
         return recordID
@@ -262,7 +273,8 @@ public actor SubscriptionCoordinator {
 
         let merged = NodeCatalog.merge(subscriptions.filter(\.isEnabled).flatMap(\.nodes))
         do {
-            let generated = try ConfigurationGenerator.generate(nodes: merged)
+            let generated = try ConfigurationGenerator.generate(
+                nodes: merged, naming: NodeNaming(settings: settings, subscriptions: subscriptions))
             guard !generated.nodes.isEmpty else {
                 return [.init(.warning, "配置", "没有启用节点，已跳过生成（Surge 配置保持原样）")]
             }
@@ -276,12 +288,20 @@ public actor SubscriptionCoordinator {
                 serviceState = await runtime.status()
                 return [.init(.info, "配置", "配置未变化，已跳过安装与 sing-box 重启")]
             }
+            // 只有 sing-box 那一份变了才值得重启：改节点名之类的改动只落在 Surge 一侧，
+            // 顺手重启等于毫无必要地把全部连接断一次。
+            let singBoxUnchanged = runtime.installedSingBoxConfigMatches(generated)
             try await runtime.install(generated, writesSurgeProfile: settings.surgeOutputMode.writesProfile)
-            serviceState = await runtime.restart()
             var messages: [OutcomeMessage] = [
                 .init(.notice, "配置",
                       "已生成并安装 \(generated.nodes.count) 个节点出口（\(settings.surgeOutputMode.label)）"),
             ]
+            guard forceRestart || !singBoxUnchanged else {
+                serviceState = await runtime.status()
+                messages.append(.init(.info, "服务", "sing-box 配置未变，无需重启"))
+                return messages
+            }
+            serviceState = await runtime.restart()
             switch serviceState {
             case .running:
                 messages.append(.init(.info, "服务", "sing-box 已重启"))
@@ -378,12 +398,21 @@ public actor SubscriptionCoordinator {
     // MARK: - 设置
 
     public func saveSettings(_ newSettings: RouteBarSettings) async -> CoordinatorOutcome {
+        let namingChanged = newSettings.nodeNameTemplate != settings.nodeNameTemplate
         do {
             try stateStore.saveSettings(newSettings)
             settings = newSettings
             runtime = RuntimeManager(settings: newSettings)
             serviceState = await runtime.status()
-            return outcome([.init(.notice, "设置", "环境路径已更新")])
+            var messages: [OutcomeMessage] = [
+                .init(.notice, "设置", namingChanged ? "节点命名规则已更新" : "环境路径已更新"),
+            ]
+            // 命名只影响 Surge 那一侧，改完不重装的话，配置文件里还是旧名字，
+            // 而界面已经显示新规则了——要等下一次订阅更新才对得上。
+            if namingChanged {
+                messages += await regenerateMessages(forceRestart: false)
+            }
+            return outcome(messages)
         } catch {
             return outcome([.init(.error, "设置", "保存设置失败：\(error.localizedDescription)")])
         }

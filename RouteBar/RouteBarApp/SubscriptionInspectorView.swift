@@ -18,6 +18,10 @@ struct SubscriptionInspectorView: View {
                             InfoRow("地址", maskedURL)
                             Divider()
                             InfoRow("更新间隔", "\(subscription.updateIntervalHours) 小时")
+                            Divider()
+                            // 写清楚是「跟随全局」还是这条订阅自己的，否则改了全局模板
+                            // 却发现这批节点没变，只能挨条订阅点开编辑才找得到原因。
+                            InfoRow("节点命名", subscription.nodeNameTemplate ?? "跟随全局")
                             if !subscription.note.isEmpty {
                                 Divider()
                                 InfoRow("备注", subscription.note)

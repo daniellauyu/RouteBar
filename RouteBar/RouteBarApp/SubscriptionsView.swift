@@ -24,8 +24,11 @@ struct SubscriptionsView: View {
             }
         }
         .sheet(item: $editor) { context in
-            SubscriptionEditorView(context: context) { id, name, url, note, interval in
-                model.saveSubscription(id: id, name: name, url: url, note: note, interval: interval)
+            SubscriptionEditorView(context: context,
+                                   globalNameTemplate: model.settings.nodeNameTemplate) { edited in
+                model.saveSubscription(id: edited.subscriptionID, name: edited.name, url: edited.url,
+                                       note: edited.note, interval: edited.interval,
+                                       nodeNameTemplate: edited.nodeNameTemplate)
             }
         }
     }

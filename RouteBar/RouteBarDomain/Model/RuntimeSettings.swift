@@ -22,6 +22,9 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
     /// 内容本身不含凭据（只有 `socks5, 127.0.0.1, <端口>`），但一个不可猜的路径能挡住
     /// 本机其它程序顺手扫端口扫出来，代价只有几行。首次需要时生成并存下来，保持地址稳定。
     public var subscriptionToken: String
+    /// 输出给 Surge 的节点名模板，占位符见 `NodeNaming`。
+    /// 每条订阅可以用 `SubscriptionRecord.nodeNameTemplate` 覆盖它。
+    public var nodeNameTemplate: String
 
     public nonisolated init(singBoxBinaryPath: String,
                             singBoxConfigPath: String,
@@ -32,7 +35,8 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
                             launchAgentLabel: String,
                             surgeOutputMode: SurgeOutputMode = .profile,
                             subscriptionPort: Int = 7899,
-                            subscriptionToken: String = RouteBarSettings.makeToken()) {
+                            subscriptionToken: String = RouteBarSettings.makeToken(),
+                            nodeNameTemplate: String = NodeNaming.defaultTemplate) {
         self.singBoxBinaryPath = singBoxBinaryPath
         self.singBoxConfigPath = singBoxConfigPath
         self.singBoxLogPath = singBoxLogPath
@@ -43,6 +47,7 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
         self.surgeOutputMode = surgeOutputMode
         self.subscriptionPort = subscriptionPort
         self.subscriptionToken = subscriptionToken
+        self.nodeNameTemplate = nodeNameTemplate
     }
 
     public nonisolated static func makeToken() -> String {
@@ -72,7 +77,7 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
     private enum CodingKeys: String, CodingKey {
         case singBoxBinaryPath, singBoxConfigPath, singBoxLogPath, singBoxErrorLogPath
         case surgeProfilePath, launchAgentPath, launchAgentLabel
-        case surgeOutputMode, subscriptionPort, subscriptionToken
+        case surgeOutputMode, subscriptionPort, subscriptionToken, nodeNameTemplate
     }
 
     public nonisolated init(from decoder: Decoder) throws {
@@ -89,6 +94,10 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
         subscriptionPort = try container.decodeIfPresent(Int.self, forKey: .subscriptionPort) ?? fallback.subscriptionPort
         subscriptionToken = try container.decodeIfPresent(String.self, forKey: .subscriptionToken)
             ?? RouteBarSettings.makeToken()
+        // 缺失时必须回落到默认模板而不是空串：老版本写下的 settings.json 里没有这个键，
+        // 补成空的等于把所有人的节点名换掉，Surge 策略组里存的旧名字会集体失效。
+        nodeNameTemplate = try container.decodeIfPresent(String.self, forKey: .nodeNameTemplate)
+            ?? NodeNaming.defaultTemplate
     }
 
     /// Homebrew 在 Apple Silicon 与 Intel 上的前缀不同，装法也可能是别的包管理器。

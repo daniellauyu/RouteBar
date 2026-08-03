@@ -12,10 +12,9 @@ public enum SurgeProfileUpdater {
         }
         var result = profile
         result.replaceSubrange(proxyStart.lowerBound..<groupStart.lowerBound, with: generated.surgeProxySection + "\n")
-        let names = generated.surgeProxySection.components(separatedBy: .newlines)
-            .filter { $0.hasPrefix("RouteBar ") }
-            .compactMap { $0.components(separatedBy: " = ").first }
-            .map { "\"\($0)\"" }.joined(separator: ", ")
+        // 名字直接取生成结果里的那一份，不从文本反推：命名规则可配置之后，
+        // 按 `RouteBar ` 前缀过滤会漏掉全部自定义名字，策略组会变成空的。
+        let names = generated.policyNames.map { "\"\($0)\"" }.joined(separator: ", ")
         let regex = try NSRegularExpression(pattern: #"(?m)^sing-box 节点\s*=.*$"#)
         if let match = regex.firstMatch(in: result, range: NSRange(result.startIndex..., in: result)),
            let range = Range(match.range, in: result) {

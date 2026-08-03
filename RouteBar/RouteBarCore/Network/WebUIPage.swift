@@ -9,7 +9,7 @@ import Foundation
 /// 令牌不内联进页面，而是由脚本从自身 URL（`/<token>/`）里读出来。内联的话，
 /// 任何把 HTML 存下来或贴出去的动作都会连令牌一起泄露。
 enum WebUIPage {
-    static let html = #"""
+    nonisolated static let html = #"""
     <!doctype html>
     <html lang="zh-CN">
     <head>
@@ -162,6 +162,24 @@ enum WebUIPage {
       </div>
 
       <div class="card">
+        <div class="row between" style="margin-bottom:10px">
+          <h2 style="margin:0">节点命名</h2>
+          <span class="dim" id="naming-preview"></span>
+        </div>
+        <div class="row">
+          <input id="naming-template" class="grow" placeholder="RouteBar {index} - {name}">
+          <button id="btn-naming-test">测试</button>
+          <button class="primary" id="btn-naming-save">保存</button>
+          <button id="btn-naming-reset">恢复默认</button>
+        </div>
+        <div class="dim" id="naming-help" style="margin-top:8px"></div>
+        <div class="dim" style="margin-top:4px">
+          「测试」只按输入框里的模板试跑一遍，不保存。单条订阅可以在下面「编辑」里另设模板。
+        </div>
+        <div id="naming-result" hidden style="margin-top:10px"></div>
+      </div>
+
+      <div class="card">
         <h2>订阅</h2>
         <div id="subs"></div>
         <form class="add" id="add-form">
@@ -282,8 +300,19 @@ enum WebUIPage {
       $('m-tested').textContent = data.counts.tested;
       $('m-failed').textContent = data.counts.failedLatency;
 
+      renderNaming(data.naming);
       renderSubscriptions(data.subscriptions);
       renderNodes(data.nodes);
+    }
+
+    function renderNaming(naming) {
+      const input = $('naming-template');
+      // 轮询正好落在用户输入到一半时，覆盖输入框等于把人打断。聚焦时只更新说明。
+      if (document.activeElement !== input) input.value = naming.template;
+      input.placeholder = naming.defaultTemplate;
+      $('naming-preview').textContent = naming.preview.join(' · ');
+      $('naming-help').textContent =
+        '可用占位符：' + naming.placeholders.map((p) => p.token + ' ' + p.summary).join('、');
     }
 
     function renderSubscriptions(list) {
@@ -364,9 +393,14 @@ enum WebUIPage {
       interval.max = '168';
       interval.value = String(sub.updateIntervalHours);
 
+      const template = element('input');
+      template.value = sub.nodeNameTemplate || '';
+      template.placeholder = (snapshot && snapshot.naming.template) || '留空跟随全局';
+
       const grid = element('div', 'editor');
       grid.append(labelled('名称', name), labelled('订阅地址', url),
-                  labelled('备注', note), labelled('更新间隔（小时）', interval));
+                  labelled('备注', note), labelled('更新间隔（小时）', interval),
+                  labelled('节点命名（留空跟随全局）', template));
       box.append(grid);
 
       const save = element('button', 'primary', '保存');
@@ -376,6 +410,8 @@ enum WebUIPage {
           name: name.value.trim(),
           note: note.value.trim(),
           intervalHours: Math.min(168, Math.max(1, parseInt(interval.value, 10) || sub.updateIntervalHours)),
+          // 总是带上：空串在这里的意思是「清掉覆盖、跟随全局」，不是「不改」。
+          nodeNameTemplate: template.value.trim(),
         };
         if (!payload.name) { toast('名称不能为空'); return; }
         const typed = url.value.trim();
@@ -418,7 +454,13 @@ enum WebUIPage {
         const item = element('div', 'item row between' + (node.enabled ? '' : ' off'));
         item.append(element('span', 'idx', String(order.get(node.id))));
         const left = element('div', 'grow');
-        left.append(element('div', null, node.name));
+        const title = element('div', 'row');
+        title.append(element('span', null, node.name));
+        // 机场给的名字和 Surge 里看到的名字是两回事（后者由命名模板拼），并排显示才对得上。
+        if (node.outputName) {
+          title.append(element('span', 'dim', '→'), element('span', 'mono', node.outputName));
+        }
+        left.append(title);
         const meta = element('div', 'dim');
         // 协议是上游的，本地端口是 RouteBar 造出来的壳——两者并列才说得清这一行是什么。
         meta.textContent = node.protocolLabel + ' · ' + node.server +
@@ -459,6 +501,46 @@ enum WebUIPage {
     $('btn-copy-url').onclick = () => copy(snapshot.output.subscriptionURL, '订阅地址');
     $('btn-copy-line').onclick = () => copy(snapshot.output.surgePolicyLine, '策略组行');
     $('filter').oninput = () => { if (snapshot) renderNodes(snapshot.nodes); };
+
+    async function saveNaming(template) {
+      const data = await call('/naming', 'POST', { template });
+      if (data) {
+        $('naming-result').hidden = true;
+        render(data);
+        toast('已保存，输出的节点名已按新规则重新生成');
+      }
+    }
+
+    // 试跑：服务端按传过去的模板算一遍名字，不保存任何东西。
+    // 名字里的序号和重名补号都取决于整批节点，所以只能由服务端算，网页不自己拼。
+    async function testNaming(template) {
+      const data = await call('/naming/preview', 'POST', { template });
+      if (!data) return;
+      const box = $('naming-result');
+      const head = element('div', 'dim', data.isSample
+        ? '当前没有启用节点，下面是示例：'
+        : data.rows.length + ' 个启用节点会变成：');
+      const rows = data.rows.map((row, index) => {
+        const line = element('div', 'item row');
+        line.append(element('span', 'idx', String(index + 1)));
+        line.append(element('div', 'grow', row.name));
+        line.append(element('span', 'dim', '→'));
+        line.append(element('div', 'grow mono', row.outputName));
+        line.append(element('span', 'dim', String(row.localPort)));
+        return line;
+      });
+      box.replaceChildren(head, ...rows);
+      box.hidden = false;
+    }
+
+    $('btn-naming-test').onclick = () => testNaming($('naming-template').value.trim());
+    $('btn-naming-save').onclick = () => saveNaming($('naming-template').value.trim());
+    $('btn-naming-reset').onclick = () => saveNaming(snapshot ? snapshot.naming.defaultTemplate : '');
+    $('naming-template').onkeydown = (event) => {
+      if (event.key === 'Enter') testNaming($('naming-template').value.trim());
+    };
+    // 模板一改，上一次的试跑结果就不再对应输入框里的内容了，留着只会看错。
+    $('naming-template').oninput = () => { $('naming-result').hidden = true; };
 
     $('add-form').onsubmit = async (event) => {
       event.preventDefault();

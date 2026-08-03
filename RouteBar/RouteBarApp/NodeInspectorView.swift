@@ -22,6 +22,10 @@ struct NodeInspectorView: View {
                             if let port = localPort(for: node) {
                                 Divider()
                                 InfoRow("本地端口", "127.0.0.1:\(port)")
+                                Divider()
+                                // 机场给的名字和 Surge 里看到的名字是两回事（后者由命名模板拼），
+                                // 在策略组里找不到某个节点时，要对的是这一行。
+                                InfoRow("Surge 名称", surgeName(for: node) ?? "—")
                             }
                         }
 
@@ -107,5 +111,13 @@ struct NodeInspectorView: View {
 
     private func localPort(for node: ProxyNode) -> Int? {
         model.mappedNodes.first { $0.node.id == node.id }?.localPort
+    }
+
+    /// 整批算再挑一个，而不是单独给这个节点拼一次：名字里的序号取自整批的位置，
+    /// 重名时的补号也只有在知道全部名字时才算得出来。
+    private func surgeName(for node: ProxyNode) -> String? {
+        let mapped = model.mappedNodes
+        guard let index = mapped.firstIndex(where: { $0.node.id == node.id }) else { return nil }
+        return model.nodeNaming.names(for: mapped)[index]
     }
 }

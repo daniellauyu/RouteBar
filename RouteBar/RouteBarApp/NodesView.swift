@@ -73,7 +73,8 @@ struct NodesView: View {
                     ForEach(filteredNodes) { item in
                         NodeRow(item: item,
                                 number: nodeNumbers[item.node.id],
-                                source: sourceName(for: item.node))
+                                source: sourceName(for: item.node),
+                                outputName: outputNames[item.node.id])
                             .tag(Optional(item.node.id))
                     }
                 }
@@ -176,6 +177,14 @@ struct NodesView: View {
         Dictionary(uniqueKeysWithValues: model.mergedNodes.enumerated().map { ($0.element.id, $0.offset + 1) })
     }
 
+    /// 节点 id → 在 Surge 里的名字。
+    ///
+    /// 整批算一次再按 id 取：名字里的序号取自完整列表的位置，重名补号也只有知道全部名字
+    /// 才算得出来，逐行现算既不对也慢。
+    private var outputNames: [String: String] {
+        model.nodeNaming.namesByNodeID(for: model.mappedNodes)
+    }
+
     // MARK: - 筛选
 
     private var regions: [String] {
@@ -228,6 +237,9 @@ private struct NodeRow: View {
     let item: PortMappedNode
     let number: Int?
     let source: String
+    /// 这个节点在 Surge 里的名字。与上面那行机场给的原名并列显示——
+    /// 命名模板可配置之后，两者可以完全不一样，在策略组里找不到某个节点时要对的是这个。
+    let outputName: String?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -245,7 +257,19 @@ private struct NodeRow: View {
             .controlSize(.mini)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(item.node.name).font(.body.weight(.medium)).lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(item.node.name).font(.body.weight(.medium)).lineLimit(1)
+                    if let outputName {
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                        Text(outputName)
+                            .font(.callout.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .help("这个节点在 Surge 里的名字")
+                    }
+                }
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)

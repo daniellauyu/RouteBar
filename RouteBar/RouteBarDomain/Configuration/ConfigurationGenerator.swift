@@ -5,11 +5,18 @@ public struct GeneratedConfiguration: Sendable {
     public let nodes: [PortMappedNode]
     public let singBoxJSON: Data
     public let surgeProxySection: String
+    /// 这一批代理在 Surge 里叫什么，与 `surgeProxySection` 的每一行一一对应。
+    ///
+    /// 单独带出来是因为策略组那一行要列出全部名字。原先是从生成的文本里挑
+    /// `RouteBar ` 开头的行反推——名字可配置之后，这个前缀不再成立。
+    public let policyNames: [String]
 
-    public nonisolated init(nodes: [PortMappedNode], singBoxJSON: Data, surgeProxySection: String) {
+    public nonisolated init(nodes: [PortMappedNode], singBoxJSON: Data,
+                            surgeProxySection: String, policyNames: [String]) {
         self.nodes = nodes
         self.singBoxJSON = singBoxJSON
         self.surgeProxySection = surgeProxySection
+        self.policyNames = policyNames
     }
 
     /// 供 Surge `policy-path=` 拉取的策略列表。
@@ -45,7 +52,9 @@ public enum ConfigurationGenerator {
             .map { PortMappedNode(node: $0.element, localPort: startingPort + $0.offset) }
     }
 
-    public nonisolated static func generate(nodes: [ProxyNode], startingPort: Int = 7701) throws -> GeneratedConfiguration {
+    public nonisolated static func generate(nodes: [ProxyNode],
+                                            startingPort: Int = 7701,
+                                            naming: NodeNaming = .default) throws -> GeneratedConfiguration {
         let mapped = portMapping(nodes: nodes, startingPort: startingPort)
 
         let inbounds: [[String: Any]] = mapped.enumerated().map { index, item in
@@ -76,8 +85,10 @@ public enum ConfigurationGenerator {
             "route": ["rules": rules],
         ]
         let json = try JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys])
+        let names = naming.names(for: mapped)
         return GeneratedConfiguration(nodes: mapped, singBoxJSON: json,
-                                      surgeProxySection: "[Proxy]\n" + surgePolicyLines(mapped))
+                                      surgeProxySection: "[Proxy]\n" + policyLines(names: names, mapped: mapped),
+                                      policyNames: names)
     }
 
     /// 裸策略行（无 `[Proxy]` 段头），本地订阅服务直接返回这一份。
@@ -85,24 +96,25 @@ public enum ConfigurationGenerator {
     /// 单独拎出来是为了让「写进配置文件的 `[Proxy]` 段」和「订阅地址返回的列表」同源。
     /// 各写一遍的话，两种输出方式并用（`.both`）时 Surge 会看到两套名字不同的同一批节点，
     /// 而这种错位只有逐行比对才看得出来。
-    public nonisolated static func surgePolicyLines(_ mapped: [PortMappedNode]) -> String {
-        mapped.enumerated()
-            .map { "\(surgeName($0.offset, $0.element.node.name)) = socks5, 127.0.0.1, \($0.element.localPort)" }
+    ///
+    /// `naming` 也必须两边同源：本地订阅服务是按请求现算的，传了不一样的命名规则，
+    /// 同一个端口在两种输出方式下会有两个名字。
+    public nonisolated static func surgePolicyLines(_ mapped: [PortMappedNode],
+                                                    naming: NodeNaming = .default) -> String {
+        policyLines(names: naming.names(for: mapped), mapped: mapped)
+    }
+
+    private nonisolated static func policyLines(names: [String], mapped: [PortMappedNode]) -> String {
+        zip(names, mapped)
+            .map { "\($0) = socks5, 127.0.0.1, \($1.localPort)" }
             .joined(separator: "\n") + "\n"
     }
 
+    /// sing-box 的内部标签。
+    ///
+    /// 与用户可配置的 Surge 代理名无关，也不该跟着它走：这两个 tag 只要求唯一且稳定，
+    /// 入站与出站靠它们一一绑定，掺进用户输入只会引入重名和非法字符的风险。
     private nonisolated static func tag(_ prefix: String, _ index: Int) -> String {
         "\(prefix)-routebar-\(String(format: "%02d", index + 1))"
-    }
-
-    /// Surge 代理名。
-    ///
-    /// 逗号、等号、引号和换行在 Surge 配置里是语法字符，节点名里带这些会把整行拆坏，
-    /// 因此一律替换成空格。前缀编号保证同名节点不会互相覆盖。
-    private nonisolated static func surgeName(_ index: Int, _ name: String) -> String {
-        let safe = name.replacingOccurrences(of: "[,=\"'\\r\\n]", with: " ", options: .regularExpression)
-            .replacingOccurrences(of: "  +", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespaces)
-        return "RouteBar \(String(format: "%02d", index + 1)) - \(safe)"
     }
 }
