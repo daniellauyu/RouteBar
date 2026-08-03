@@ -66,18 +66,21 @@ public struct LatencyTester: Sendable {
     private nonisolated func probe(_ mapped: PortMappedNode) async -> (String, LatencyRecord) {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = timeout
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.connectionProxyDictionary = [
             "SOCKSEnable": true, "SOCKSProxy": "127.0.0.1", "SOCKSPort": mapped.localPort,
         ]
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
 
+        let metrics = LatencyTaskMetricsCollector()
         let start = ContinuousClock.now
         do {
-            let (_, response) = try await session.data(from: testURL)
+            var request = URLRequest(url: testURL)
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            let (_, response) = try await session.data(for: request, delegate: metrics)
             let elapsed = start.duration(to: .now)
-            let milliseconds = Int(Double(elapsed.components.seconds) * 1000
-                + Double(elapsed.components.attoseconds) / 1e15)
+            let milliseconds = metrics.milliseconds(fallback: elapsed)
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             let outcome: LatencyOutcome = (200..<400).contains(code) ? .success : .httpFailed
             return (mapped.node.id, LatencyRecord(outcome: outcome, milliseconds: outcome == .success ? milliseconds : nil))
@@ -87,5 +90,38 @@ public struct LatencyTester: Sendable {
         } catch {
             return (mapped.node.id, LatencyRecord(outcome: .connectionFailed, milliseconds: nil))
         }
+    }
+}
+
+/// URLSession 的完整任务耗时包含 SOCKS、Reality 和目标站连接。为贴近 Surge 的显示结果，
+/// 这里只取代理隧道建立后从 HTTP 请求发出到收到响应首字节的时间；指标缺失时退回完整耗时。
+private final class LatencyTaskMetricsCollector: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var requestStart: Date?
+    private var responseStart: Date?
+
+    nonisolated func urlSession(_ session: URLSession,
+                               task: URLSessionTask,
+                               didFinishCollecting metrics: URLSessionTaskMetrics) {
+        guard let transaction = metrics.transactionMetrics.reversed().first(where: {
+            $0.requestStartDate != nil && $0.responseStartDate != nil
+        }) else { return }
+
+        lock.lock()
+        requestStart = transaction.requestStartDate
+        responseStart = transaction.responseStartDate
+        lock.unlock()
+    }
+
+    nonisolated func milliseconds(fallback: Duration) -> Int {
+        lock.lock()
+        let start = requestStart
+        let end = responseStart
+        lock.unlock()
+        return LatencyMeasurement.milliseconds(
+            requestStart: start,
+            responseStart: end,
+            fallback: fallback
+        )
     }
 }

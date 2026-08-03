@@ -146,6 +146,8 @@ struct ConfigurationGeneratorTests {
 @Suite struct LatencyTestEndpointTests {
     @Test func resolvesPresetsAndFallsBackOnGarbage() {
         #expect(LatencyTestEndpoint.resolve(LatencyTestEndpoint.gstatic.rawValue).host == "www.gstatic.com")
+        #expect(LatencyTestEndpoint.resolve(LatencyTestEndpoint.gstatic.rawValue).scheme == "http")
+        #expect(LatencyTestEndpoint.fallback == .gstatic)
         #expect(LatencyTestEndpoint.resolve("https://example.com/204").host == "example.com")
 
         // 半截 URL、空串、纯文本都不能让测速悄悄打到一个不存在的地址上。

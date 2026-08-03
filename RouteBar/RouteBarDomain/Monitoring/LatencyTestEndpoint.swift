@@ -9,7 +9,7 @@ import Foundation
 /// 因为落地后到目标的路径不同），所以**换了端点之后的结果不要和换之前的比**。
 public enum LatencyTestEndpoint: String, CaseIterable, Identifiable, Sendable {
     case cloudflare = "https://cp.cloudflare.com/generate_204"
-    case gstatic = "https://www.gstatic.com/generate_204"
+    case gstatic = "http://www.gstatic.com/generate_204"
     case apple = "https://captive.apple.com/hotspot-detect.html"
 
     public nonisolated var id: String { rawValue }
@@ -22,9 +22,9 @@ public enum LatencyTestEndpoint: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// 默认用 Cloudflare：它的检测端点有 anycast 加持，落地在哪都能就近命中，
-    /// 测出来更接近节点本身的能力而不是「节点到某个特定机房有多远」。
-    public nonisolated static let fallback = LatencyTestEndpoint.cloudflare
+    /// 与当前 Surge 配置的 URL test 端点保持一致，便于直接比较两边显示的延迟。
+    /// 使用 HTTP 也避免把目标站 TLS 握手混进代理延迟。
+    public nonisolated static let fallback = LatencyTestEndpoint.gstatic
 
     /// 把设置里存的字符串解析成可用的 URL，非法值回落到默认端点。
     public nonisolated static func resolve(_ raw: String) -> URL {
