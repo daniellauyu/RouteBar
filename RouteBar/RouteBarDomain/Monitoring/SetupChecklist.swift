@@ -83,10 +83,12 @@ public struct SetupChecklist: Sendable, Equatable {
         case .subscription, .both:
             steps.append(SetupStep(
                 kind: .surge,
-                title: "把订阅地址填进 Surge",
-                done: "本地订阅服务已在监听，把策略组行粘进 Surge 即可。",
+                title: "接上代理客户端",
+                done: "本地订阅服务已在监听。Surge 用 policy-path 拉取即可；"
+                    + "别的客户端直接把 127.0.0.1:7701 起的端口当 SOCKS5/HTTP 代理用。",
                 todo: "本地订阅服务还没起来（通常是端口被占用，见「服务」页）。"
-                    + "服务正常后复制策略组行，粘进 Surge 配置的 [Proxy Group] 段。",
+                    + "起来之后，Surge 复制策略组行粘进 [Proxy Group] 段；用别的客户端则不必等它——"
+                    + "每个启用节点都有一个本机端口，直接填进去就能用。",
                 isDone: subscriptionServing))
         }
 

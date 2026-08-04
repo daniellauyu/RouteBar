@@ -81,11 +81,15 @@ public struct AppViewState: Sendable {
         if subscriptions.isEmpty { messages.append("还没有订阅，先添加一个订阅地址。") }
         if failedSubscriptions > 0 { messages.append("\(failedSubscriptions) 个订阅最近更新失败。") }
         if enabledSubscriptions > 0 && enabled.isEmpty {
-            messages.append("当前没有启用节点，Surge 分流会缺少可选代理。")
+            messages.append("当前没有启用节点，没有任何本地出口可供代理客户端使用。")
         }
         if environment.singBoxBinary == .missing { messages.append("未找到 sing-box 可执行文件，请在「环境」页确认路径。") }
         if environment.launchAgent == .missing { messages.append("LaunchAgent 未找到，sing-box 可能无法由 RouteBar 管理。") }
-        if environment.surgeProfile == .missing { messages.append("Surge 托管配置未找到，需要先生成或确认配置路径。") }
+        // 只在真的要写 Surge 配置时才提。用订阅地址接别的客户端（甚至只用环境变量走
+        // curl）的人没有那个文件，无条件报缺失等于给他们一条永远修不好的警告。
+        if settings.surgeOutputMode.writesProfile, environment.surgeProfile == .missing {
+            messages.append("Surge 托管配置未找到，需要先生成或确认配置路径。")
+        }
         if let reason = serviceState.failureReason { messages.append("sing-box 状态异常：\(reason)") }
 
         let status: OverallStatus

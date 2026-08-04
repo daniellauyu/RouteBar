@@ -178,26 +178,36 @@ public enum EnvironmentItemState: String, Codable, Sendable {
     case missing
 }
 
-/// 环境自检结果：RouteBar 依赖的五个外部落点是否就位。
+/// 环境自检结果：RouteBar 依赖的外部落点是否就位。
 public struct RouteBarEnvironmentReport: Equatable, Sendable {
     public let singBoxBinary: EnvironmentItemState
     public let surgeProfilesDirectory: EnvironmentItemState
     public let surgeProfile: EnvironmentItemState
     public let singBoxConfigDirectory: EnvironmentItemState
     public let launchAgent: EnvironmentItemState
+    /// Surge 的那两项算不算数。
+    ///
+    /// RouteBar 产出的是一组本机 SOCKS5/HTTP 端口，Surge 只是消费它们的方式之一；
+    /// 只输出订阅地址时 RouteBar 根本不碰 Surge 配置文件，用别的客户端（甚至只用
+    /// 环境变量走 curl）的人压根没有那个文件。把它无条件算成「缺失」，等于让这些人
+    /// 永远顶着一条修不好的警告。
+    public let expectsSurgeProfile: Bool
 
-    public nonisolated init(paths: RuntimePaths, exists: (URL) -> Bool) {
+    public nonisolated init(paths: RuntimePaths, expectsSurgeProfile: Bool = true, exists: (URL) -> Bool) {
         singBoxBinary = exists(paths.singBoxBinary) ? .ready : .missing
         surgeProfilesDirectory = exists(paths.surgeProfilesDirectory) ? .ready : .missing
         surgeProfile = exists(paths.surgeProfile) ? .ready : .missing
         singBoxConfigDirectory = exists(paths.singBoxConfigDirectory) ? .ready : .missing
         launchAgent = exists(paths.launchAgent) ? .ready : .missing
+        self.expectsSurgeProfile = expectsSurgeProfile
     }
 
     public nonisolated var needsSetup: Bool { missingCount > 0 }
 
+    /// 只统计**当前配置下真正需要**的项。
     public nonisolated var missingCount: Int {
-        [singBoxBinary, surgeProfilesDirectory, surgeProfile, singBoxConfigDirectory, launchAgent]
-            .filter { $0 == .missing }.count
+        var items = [singBoxBinary, singBoxConfigDirectory, launchAgent]
+        if expectsSurgeProfile { items += [surgeProfilesDirectory, surgeProfile] }
+        return items.filter { $0 == .missing }.count
     }
 }

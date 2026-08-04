@@ -97,7 +97,10 @@ public actor SubscriptionCoordinator {
     }
 
     private func environmentReport() -> RouteBarEnvironmentReport {
-        RouteBarEnvironmentReport(paths: runtime.paths) { FileManager.default.fileExists(atPath: $0.path) }
+        RouteBarEnvironmentReport(paths: runtime.paths,
+                                  expectsSurgeProfile: settings.surgeOutputMode.writesProfile) {
+            FileManager.default.fileExists(atPath: $0.path)
+        }
     }
 
     private func outcome(_ messages: [OutcomeMessage] = []) -> CoordinatorOutcome {

@@ -1,21 +1,26 @@
 # RouteBar
 
 RouteBar 是一个 macOS SwiftUI 应用：拉取机场订阅、解析并去重 VLESS Reality 节点、
-为每个启用节点生成一个 sing-box 本地 SOCKS 出口，再把这些出口注入 Surge 配置。
-分流规则仍由 Surge 决定，RouteBar 只负责把可用出口准备好并保持同步。
+**为每个启用节点在本机开一个代理端口**（`127.0.0.1:7701` 起，同端口同时支持 SOCKS5 和 HTTP），
+并保持这批端口与订阅同步。
+
+谁来消费这些端口，由你决定。RouteBar 额外为 **Surge** 准备了现成的接法（改写配置或提供
+订阅地址），但那只是其中一种——分流规则从来不由 RouteBar 决定，它只负责把可用出口准备好。
 
 ## 安装
 
-需要先有这三样：
+需要先有这两样：
 
 - **macOS 14 (Sonoma) 或更新**
-- **Surge**，且有一份可用的配置
 - **sing-box**：`brew install sing-box`。RouteBar 不自带它，只调用它
 
 > 最低版本卡在 14 的原因是 `ContentUnavailableView` 与双参数的 `onChange`，两者都是
 > macOS 14 才有的 SwiftUI API。开发是在更新的系统上做的，14 只做过编译验证。
 
-然后二选一。
+**Surge 不是必需的**。装了 Surge 可以用现成的两种接法，没装则把本机端口填进任何支持
+SOCKS5 或 HTTP 代理的客户端——见下面的「怎么用这些端口」。
+
+安装本体二选一。
 
 **自己构建**（推荐）。仓库里没有任何私有依赖，克隆后直接构建即可，也不会遇到下面的
 Gatekeeper 问题：
@@ -48,25 +53,47 @@ xattr -dr com.apple.quarantine /Applications/RouteBar.app
 | 2. 创建配置目录 | 点「创建目录」 | ✓ |
 | 3. 安装 LaunchAgent | 点「去安装」，在「环境」页一键生成并加载 | ✓ |
 | 4. 添加订阅 | 粘贴机场订阅地址（只存钥匙串） | — |
-| 5. 接上 Surge | 见下 | 部分 |
+| 5. 接上代理客户端 | 见下一节 | 部分 |
 | 6. 启动 sing-box | 点「启动服务」 | ✓ |
 | 7.（建议）开机自启 | 点「打开」 | ✓ |
 
-第 5 步取决于「通用 → 输出到 Surge」选了哪种方式：
-
-- **本地订阅地址**（默认，推荐）：复制 RouteBar 给出的那一行，粘进 Surge 配置的
-  `[Proxy Group]` 段。完全不碰 Surge 配置文件，可与 sub.store 等外部订阅共存。
-
-  ```
-  🔰 RouteBar = select, policy-path=http://127.0.0.1:7899/<令牌>/proxies, update-interval=0
-  ```
-
-- **写入 Surge 配置**：需要先有一份含 `[Proxy]` 与 `[Proxy Group]` 两个段的配置，
-  并在「环境」页把路径指过去。RouteBar 只改写 `[Proxy]` 段和「sing-box 节点」策略组，
-  规则与其它策略组原样保留——但**该段是整段替换的**，里面除 RouteBar 之外的代理会消失。
-
 只解析 **VLESS Reality** 节点，订阅里的 ss / trojan / vmess 会被静默跳过，所以导入的节点
 可能比机场给的少。节点页每行都标了上游协议。
+
+## 怎么用这些端口
+
+每个**启用**的节点占一个本机端口，从 `7701` 开始顺排（节点页每行都显示自己的端口）。
+入站类型是 sing-box 的 `mixed`，**同一个端口同时接受 SOCKS5 和 HTTP 代理**，只监听
+`127.0.0.1`。所以有三种用法：
+
+**一、任何支持代理的客户端**（不需要 Surge）。把地址填进去就行：
+
+```sh
+# 终端：让这一条命令走第 3 个节点
+ALL_PROXY=socks5://127.0.0.1:7703 curl https://example.com
+
+# 或者 HTTP 代理，同一个端口
+https_proxy=http://127.0.0.1:7703 curl https://example.com
+```
+
+浏览器插件（SwitchyOmega 之类）、Proxifier、各种下载工具、以及 Clash/Mihomo、Loon、
+Quantumult X 这些能把外部 SOCKS5 当作节点的客户端，都填 `127.0.0.1:<端口>` 即可。
+自己写规则分流也是在那些客户端里做，RouteBar 不参与。
+
+**二、Surge：本地订阅地址**（默认方式）。RouteBar 起一个本地 HTTP 服务，把整批端口
+按 Surge 的策略集格式吐出来，Surge 用 `policy-path=` 拉取。完全不碰配置文件，可与
+sub.store 等外部订阅共存：
+
+```
+🔰 RouteBar = select, policy-path=http://127.0.0.1:7899/<令牌>/proxies, update-interval=0
+```
+
+**三、Surge：直接写配置**。需要先有一份含 `[Proxy]` 与 `[Proxy Group]` 两个段的配置，
+在「环境」页把路径指过去。RouteBar 只改写 `[Proxy]` 段和「sing-box 节点」策略组，
+规则与其它策略组原样保留——但**该段是整段替换的**，里面除 RouteBar 之外的代理会消失。
+
+后两种是为 Surge 的配置语法准备的现成接法（`名字 = socks5, 127.0.0.1, 端口`）。
+换成别的客户端时它们没有意义，选「本地订阅地址」并忽略那个地址即可，或者直接用第一种。
 
 ### RouteBar 和 sing-box 的分工
 
@@ -74,9 +101,11 @@ xattr -dr com.apple.quarantine /Applications/RouteBar.app
 真正持有 sing-box 进程的是 macOS 的 launchd。
 
 ```
-Surge ──▶ 127.0.0.1:7701… (sing-box) ──▶ Reality 出口
-             ▲
-             └── RouteBar 只在旁边写配置：sing-box.json / LaunchAgent plist / Surge 那一侧
+你的代理客户端 ──▶ 127.0.0.1:7701… (sing-box) ──▶ Reality 出口
+（Surge / Clash / 浏览器插件 / curl …）    ▲
+                                          └── RouteBar 只在旁边写配置：
+                                              sing-box.json、LaunchAgent plist、
+                                              以及（可选）Surge 那一侧
 ```
 
 因此：
@@ -86,8 +115,9 @@ Surge ──▶ 127.0.0.1:7701… (sing-box) ──▶ Reality 出口
 - 手动 `kill` sing-box 也没用，launchd 会立刻拉起来。要真停，用 RouteBar 的「停止服务」
   （走 `launchctl bootout`）。
 - RouteBar 没运行时，少掉的是这四件事：订阅自动更新、测速、Web/命令行界面，以及
-  **本地订阅端口**——用订阅方式时 Surge 拉不到新节点（旧的仍在用它的缓存）。
-  这就是建议打开开机自启的原因。
+  **本地订阅端口**——用 Surge 订阅方式时它拉不到新节点（旧的仍在用缓存）。
+  这就是建议打开开机自启的原因。**直接填端口的用法完全不受影响**：那些端口属于
+  sing-box，RouteBar 关着也照常工作。
 
 ## 架构
 
@@ -160,7 +190,7 @@ RouteBar 不自带 sing-box，也不接管 Surge 的安装。以下路径都是�
 
 - sing-box 可执行文件（默认 `/opt/homebrew/bin/sing-box`）
 - sing-box 配置与日志（默认 `~/.config/sing-box/`）
-- Surge 托管配置（必须已存在，且含 `[Proxy]` 与 `[Proxy Group]` 段）
+- Surge 托管配置（**仅在选「写入 Surge 配置」时需要**，且必须已存在、含 `[Proxy]` 与 `[Proxy Group]` 段）
 - LaunchAgent plist 与 Label（由你自己安装，决定 sing-box 如何被 launchd 拉起）
 
 订阅地址存放在钥匙串，不写入任何配置文件。覆盖 sing-box 与 Surge 配置前都会留一份
@@ -169,7 +199,8 @@ RouteBar 不自带 sing-box，也不接管 Surge 的安装。以下路径都是�
 ## 节点命名
 
 这些出口在 Surge 里叫什么，由一份模板决定（「通用 → 节点命名」，也可用网页的
-「节点命名」卡片或 `routebar naming`）：
+「节点命名」卡片或 `routebar naming`）。**只影响 Surge 那两种输出**——直接填端口用的人
+不需要关心名字，端口号才是标识：
 
 | 占位符 | 含义 |
 |---|---|

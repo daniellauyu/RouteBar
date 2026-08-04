@@ -93,6 +93,30 @@ import Testing
         #expect(list.steps.allSatisfy { $0.isDone })
     }
 
+    /// Surge 的那两项只在真的要写 Surge 配置时才算数。
+    ///
+    /// RouteBar 产出的是一组本机 SOCKS5/HTTP 端口，Surge 只是消费方式之一；
+    /// 用别的客户端的人没有那个配置文件，无条件算成缺失等于给他们一条永远修不好的警告。
+    @Test func surgePathsOnlyCountWhenTheProfileIsActuallyWritten() {
+        let onlySingBox: Set<String> = [paths.singBoxBinary.path,
+                                        paths.singBoxConfigDirectory.path,
+                                        paths.launchAgent.path]
+
+        let writesProfile = RouteBarEnvironmentReport(paths: paths, expectsSurgeProfile: true) {
+            onlySingBox.contains($0.path)
+        }
+        #expect(writesProfile.missingCount == 2)     // Surge Profiles 目录 + 托管配置
+        #expect(writesProfile.needsSetup)
+
+        let subscriptionOnly = RouteBarEnvironmentReport(paths: paths, expectsSurgeProfile: false) {
+            onlySingBox.contains($0.path)
+        }
+        #expect(subscriptionOnly.missingCount == 0)
+        #expect(!subscriptionOnly.needsSetup)
+        // 事实本身不变，只是不再计入「还差几项」。
+        #expect(subscriptionOnly.surgeProfile == .missing)
+    }
+
     /// 未完成的步骤给的是「怎么做」，完成的给的是「已就位」——同一个字段两种用途，
     /// 视图不必自己判断该显示哪一句。
     @Test func detailSwitchesBetweenTodoAndDone() {
