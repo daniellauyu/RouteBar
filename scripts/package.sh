@@ -33,11 +33,36 @@ if [[ "$BUNDLE_VERSION" != "$VERSION" ]]; then
     exit 1
 fi
 
+# 公开分发的包一律改成 ad-hoc 签名。
+#
+# Xcode 默认用你的 Apple Development 证书签名，而证书里带着开发者的 Apple ID 邮箱——
+# 拿到包的任何人跑一次 `codesign -dvvv` 就能看到，开源发布时这是白送出去的个人信息。
+# 证书还会过期。ad-hoc（-s -）不含任何身份，也不会过期。
+#
+# 用户体验没有区别：两种都没有经过 Apple 公证，下载后都要放行一次
+# （xattr -dr com.apple.quarantine，或在「隐私与安全性」里点「仍要打开」）。
+#
+# --options runtime 保留 hardened runtime；bundle 里没有嵌套的框架或插件，
+# 所以不需要（已被 Apple 建议弃用的）--deep。
+echo "ad-hoc 签名…"
+codesign --force --sign - --options runtime --timestamp=none "$APP"
+
+# 签名结果必须真的是 adhoc：万一哪天签错了，个人身份会跟着包发出去，
+# 而这种事发出去就收不回来了，所以在打包前挡住而不是事后发现。
+SIGN_INFO="$(codesign -dvvv "$APP" 2>&1)"
+if ! grep -q '^Signature=adhoc' <<< "$SIGN_INFO"; then
+    echo "错误：签名不是 ad-hoc，包里可能带有开发者身份：" >&2
+    grep -E '^(Authority|TeamIdentifier|Signature)' <<< "$SIGN_INFO" | sed 's/^/  /' >&2
+    exit 1
+fi
+codesign --verify --strict "$APP"
+
 mkdir -p dist
 rm -f "$ZIP"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 
 echo "已打包 $ZIP"
 echo "  版本  ${BUNDLE_VERSION}"
+echo "  最低系统  $(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist")"
 echo "  提交  $(git rev-parse --short HEAD)"
-codesign -dv "$APP" 2>&1 | grep -E '^(Identifier|TeamIdentifier)' | sed 's/^/  /' || true
+echo "  签名  ad-hoc（未公证，用户首次打开需放行）"

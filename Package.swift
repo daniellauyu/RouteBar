@@ -6,7 +6,7 @@ import PackageDescription
 // 跑纯逻辑测试，不必启动整个 app。Core 层有 I/O 与 actor，不放进来。
 let package = Package(
     name: "RouteBarDomain",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v14)],
     products: [.library(name: "RouteBarDomain", targets: ["RouteBarDomain"])],
     targets: [
         .target(name: "RouteBarDomain", path: "RouteBar/RouteBarDomain"),

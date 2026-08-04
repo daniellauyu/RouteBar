@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.8.1
+
+面向开源发布的两处收拾：打包改用 ad-hoc 签名，最低系统版本从 26.3 降到 14.0。
+
+- `package.sh` 打包前把签名换成 **ad-hoc**（`codesign -s -`），并在结果不是 adhoc 时
+  直接报错退出。Xcode 默认用的开发证书里带着开发者的 Apple ID 邮箱，`codesign -dvvv`
+  任何人都看得到——公开发布等于白送出去，而且发出去收不回来。证书还会过期。
+  对用户没有区别：两种都没公证，都要放行一次。
+- `MACOSX_DEPLOYMENT_TARGET` 26.3 → **14.0**（`LSMinimumSystemVersion` 随之变），
+  `Package.swift` 的 platforms 同步到 `.v14`。**没有改动任何代码**：14.0 直接编译通过。
+  再往下到 13.0 会卡在 `ContentUnavailableView`（7 处）和双参数 `onChange`（5 处），
+  两者都是 macOS 14 才有的 SwiftUI API，要支持 Ventura 得自己实现替代视图。
+- 打包输出补上最低系统版本与签名方式，README 的「发布」节说明为什么必须是 ad-hoc。
+
 ## v1.8.0
 
 新增首次使用的分步引导，并给 README 补上面向使用者的安装与配置说明。

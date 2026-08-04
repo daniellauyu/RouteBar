@@ -8,9 +8,12 @@ RouteBar 是一个 macOS SwiftUI 应用：拉取机场订阅、解析并去重 V
 
 需要先有这三样：
 
-- **macOS 26.3 或更新**（`LSMinimumSystemVersion`）
+- **macOS 14 (Sonoma) 或更新**
 - **Surge**，且有一份可用的配置
 - **sing-box**：`brew install sing-box`。RouteBar 不自带它，只调用它
+
+> 最低版本卡在 14 的原因是 `ContentUnavailableView` 与双参数的 `onChange`，两者都是
+> macOS 14 才有的 SwiftUI API。开发是在更新的系统上做的，14 只做过编译验证。
 
 然后二选一。
 
@@ -22,7 +25,7 @@ git clone <仓库地址> && cd RouteBar
 xcodebuild build -project RouteBar.xcodeproj -scheme RouteBar -destination 'platform=macOS'
 ```
 
-**下载 Release**。这是个人自用项目，**没有做 Apple 公证**，从浏览器下载的包会被
+**下载 Release**。包是 **ad-hoc 签名、没有经过 Apple 公证**的，从浏览器下载后会被
 Gatekeeper 拦下（提示「无法打开，因为 Apple 无法检查其是否包含恶意软件」）。放行方式二选一：
 
 ```sh
@@ -143,6 +146,11 @@ echo "1.2.0" > VERSION
 `package.sh` 会在 app bundle 里的版本与 `VERSION` 不符时拒绝打包，所以忘记跑第 2 步
 不会产出版本对不上的包。它用 `ditto` 而不是 `zip`：`zip` 会破坏 `.app` 里的符号链接与
 扩展属性，解包后代码签名失效。
+
+打包时会把签名换成 **ad-hoc**（`codesign -s -`），并在不是 ad-hoc 时直接报错退出。
+原因是 Xcode 默认用开发证书签名，而证书里带着开发者的 Apple ID 邮箱——拿到包的人跑一次
+`codesign -dvvv` 就能看到，公开发布等于白送出去，而且发出去就收不回来。证书还会过期。
+两种签名对用户没有区别：都没有经过公证，都要放行一次。
 
 `dist/` 已被 git 忽略——包是构建产物，不是源码。
 
