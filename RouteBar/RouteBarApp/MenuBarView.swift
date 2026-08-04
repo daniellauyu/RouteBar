@@ -55,10 +55,36 @@ struct MenuBarView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if model.isUpdating { ProgressView().controlSize(.small) }
+            VStack(alignment: .trailing, spacing: 4) {
+                versionBadge
+                if model.isUpdating { ProgressView().controlSize(.small) }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    /// 版本号 + Debug 标记。
+    ///
+    /// 开发副本和已安装版本图标一模一样，两份同时跑着的时候，光看界面认不出眼前这个
+    /// 菜单栏图标属于哪一份——「改了没生效」和「压根没在跑那一份」就分不开。
+    /// 版本号相同也照样分得清，因为 Debug 构建带标记；连构建类型都一样时，
+    /// 悬停看 tooltip 里的 bundle 路径。
+    private var versionBadge: some View {
+        HStack(spacing: 5) {
+            if AppVersion.isDevelopmentBuild {
+                Text("DEBUG")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1.5)
+                    .background(.orange, in: Capsule())
+            }
+            Text(verbatim: "v\(AppVersion.current)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .help(Bundle.main.bundlePath)
     }
 
     /// 待处理项直接列在面板里——这是用户点开菜单栏最可能想知道的事。
