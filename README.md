@@ -21,7 +21,7 @@ RouteBar 是一个 macOS SwiftUI 应用：拉取机场订阅、解析并去重 V
 Gatekeeper 问题：
 
 ```sh
-git clone <仓库地址> && cd RouteBar
+git clone https://github.com/daniellauyu/RouteBar.git && cd RouteBar
 xcodebuild build -project RouteBar.xcodeproj -scheme RouteBar -destination 'platform=macOS'
 ```
 
