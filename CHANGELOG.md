@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.8.3
+
+开源准备。
+
+- 加上 **MIT License**。没有 LICENSE 的仓库法律上是「保留所有权利」，别人不能合法使用
+  或分发——放到 GitHub 上也不算开源。
+- 移除 `design-qa.md`：里面是设计走查记录，引用的是 `/Users/daniellau/.codex/…` 下的
+  本地图片，对仓库外的人只是一串打不开的路径。
+- `.gitignore` 补上 `.claude/settings.local.json`。
+
 ## v1.8.2
 
 菜单栏面板右上角显示版本号，Debug 构建额外带一个 `DEBUG` 标记。
