@@ -70,11 +70,15 @@ xattr -dr com.apple.quarantine /Applications/RouteBar.app
 
 ```sh
 # 终端：让这一条命令走第 3 个节点
-ALL_PROXY=socks5://127.0.0.1:7703 curl https://example.com
+ALL_PROXY=socks5h://127.0.0.1:7703 curl https://example.com
 
 # 或者 HTTP 代理，同一个端口
 https_proxy=http://127.0.0.1:7703 curl https://example.com
 ```
+
+> 用 **`socks5h`** 而不是 `socks5`：末尾的 `h` 表示**由代理解析域名**。写成 `socks5`
+> 时 DNS 在本机解析，被污染的域名拿到的是错的地址，握手会直接失败——这一点实测过。
+> HTTP 代理那一行没有这个问题，域名本来就是交给代理解析的。
 
 浏览器插件（SwitchyOmega 之类）、Proxifier、各种下载工具、以及 Clash/Mihomo、Loon、
 Quantumult X 这些能把外部 SOCKS5 当作节点的客户端，都填 `127.0.0.1:<端口>` 即可。
@@ -291,6 +295,11 @@ routebar web                # 浏览器打开 Web 界面
 
 `routebar help` 列出全部命令。名字匹配到多个时会把候选列出来要求说得更具体，
 不会猜一个执行。检测到输出被重定向（或设了 `NO_COLOR`）时自动去掉颜色。
+
+## 更多文档
+
+- [日常使用与排查](docs/routebar-usage.md)：文件位置、按症状排查、完全卸载
+- [CHANGELOG](CHANGELOG.md)：每个版本改了什么以及为什么
 
 ## 日志
 

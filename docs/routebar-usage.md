@@ -1,60 +1,150 @@
-# RouteBar 自用说明
+# 日常使用与排查
 
-## 管理范围
+安装、首次配置、以及「怎么用这些端口」在 [README](../README.md) 里。这一篇讲装好之后的事：
+东西都放在哪、出问题从哪查、以及怎么彻底卸掉。
 
-RouteBar 负责三件事：
+## 文件都在哪
 
-1. 管理多个订阅地址，订阅 URL 存在 Keychain。
-2. 解析 VLESS Reality 节点，去重后生成 sing-box 本地 SOCKS 出口。
-3. 更新托管的 Surge 配置，让 Surge 规则指向 RouteBar 生成的代理组。
+RouteBar 只往四个地方写东西，全部在你的用户目录下，没有任何系统级安装。
 
-## 关键路径
+| 位置 | 内容 | 谁写的 |
+|---|---|---|
+| `~/Library/Application Support/RouteBar/state.json` | 订阅元数据与节点（**不含订阅地址**） | RouteBar |
+| `~/Library/Application Support/RouteBar/settings.json` | 路径、输出方式、订阅端口与令牌、节点命名模板 | RouteBar |
+| `~/Library/Application Support/RouteBar/sing-box.json`<br>`~/…/surge-proxies.conf` | 最近一次生成结果的副本，用来对照「装进去的到底是什么」 | RouteBar |
+| `~/.config/sing-box/surge-vless.json` | 真正在跑的 sing-box 配置 | RouteBar 生成，sing-box 读取 |
+| `~/.config/sing-box/surge-vless{,-error}.log` | sing-box 自己的输出 | sing-box |
+| `~/Library/LaunchAgents/<Label>.plist` | 让 launchd 拉起 sing-box | RouteBar 生成，launchd 读取 |
+| 钥匙串，服务名 `com.liuyude.RouteBar.subscriptions` | **订阅地址**（含机场凭据） | RouteBar |
 
-RouteBar 会把这些路径保存到：
+上面除最后一行外的路径都能在「环境」页改，默认值随 bundle identifier 派生。
 
-- RouteBar 设置：`~/Library/Application Support/RouteBar/settings.json`
+两条与安全有关的约定：
 
-首次启动时，如果检测到关键路径缺失，会打开“环境设置”向导。后续也可以在“订阅管理”或“设置”里打开。
+- **订阅地址只进钥匙串**，不进 `state.json`。那份文件会被 Time Machine 备份、被同步、
+  被随手打开看，而订阅 URL 里的 token 等价于账号密码。
+- 覆盖 sing-box 配置、Surge 配置或 LaunchAgent 之前，原文件都会留一份同名的
+  **`.routebar-backup`**。想手工回滚就去找它。
 
-- sing-box 配置：`~/.config/sing-box/surge-vless.json`
-- sing-box 标准日志：`~/.config/sing-box/surge-vless.log`
-- sing-box 错误日志：`~/.config/sing-box/surge-vless-error.log`
-- Surge 托管配置：`~/Library/Application Support/Surge/Profiles/surge-singbox.conf`
-- LaunchAgent：`~/Library/LaunchAgents/com.daniellau.sing-box-surge.plist`
-- RouteBar 状态：`~/Library/Application Support/RouteBar/state.json`
-- RouteBar 更新记录：`~/Library/Application Support/RouteBar/update.log`
+`update.log` 在 v1.1.0 之后不再产生（运行日志改为内存缓冲 + 系统统一日志）。
+如果你的目录里还有一个，那是旧版本留下的，可以直接删。
 
-这些是默认值，可以在环境设置里改成新用户自己的实际路径。
+## 三个入口做的是同一件事
 
-## 多订阅处理
+窗口、网页（`http://127.0.0.1:<端口>/<令牌>/`）、命令行 `scripts/routebar` 调用的是
+**同一组方法**，所以行为不会分叉——包括改动后 500ms 合并重装、测速用哪个端点。
+挑手边顺的那个用即可，具体命令见 README 的「命令行」一节。
 
-- 每个订阅可以独立启用、更新、设置更新间隔。
-- RouteBar 会把启用订阅中的节点合并，并按节点连接参数去重。
-- 节点的启用状态和测速结果会在订阅刷新后尽量保留。
-- “订阅管理”和“节点管理”默认只显示列表区；点击具体订阅或节点后才展开右侧详情。
-- 出口在 Surge 里叫什么由“通用 → 节点命名”的模板决定（默认 `RouteBar {index} - {name}`）；
-  单条订阅可以在“编辑订阅 → 节点命名”里另设一套，留空则跟随全局。改模板会重命名
-  Surge 里的全部出口，策略组里手工引用过旧名字的地方要一并更新。
+网页与命令行都依赖本地服务，因此要求「通用 → 输出到 Surge」选了包含订阅地址的方式，
+且 RouteBar 正在运行。
 
-## 自动更新
+## 排查
 
-- 自动更新只在 RouteBar 运行时生效。
-- RouteBar 启动、重新激活、系统唤醒时会重新计算到期订阅。
-- 退出 RouteBar 后不会有额外后台任务更新订阅。
-- 总开关在“设置 → 自动更新”里，暂停/恢复状态会保存到 RouteBar 状态文件。
-- 每个订阅的更新间隔在“订阅管理 → 选择订阅 → 编辑订阅 → 更新间隔”里设置。
+先看概览页的**自检**区：能自动判断出来的问题都列在那里。下面按症状给出更细的路径。
 
-## 日志
+### 代理连不上，但 RouteBar 显示一切正常
 
-- “日志 → 更新记录”显示 RouteBar 自己写入的订阅更新、解析结果和配置生成结果。
-- “日志 → 标准日志 / 错误日志”显示 sing-box 的运行输出。
-- 更新记录会持久化到 `~/Library/Application Support/RouteBar/update.log`，重启 RouteBar 后仍可查看。
+按链路顺序排除，**从最外面开始**：
 
-## 常见排查顺序
+1. **是不是客户端没指对端口。** 节点页每行都写着自己的本地端口。直接验一下：
+   ```sh
+   curl -x socks5h://127.0.0.1:7701 -sS -o /dev/null -w '%{http_code}\n' https://www.gstatic.com/generate_204
+   ```
+   返回 `204` 说明这个节点本身通，问题在客户端配置。**注意是 `socks5h` 不是 `socks5`**，
+   见下一条。
+2. **sing-box 在跑吗**：`launchctl print gui/$(id -u)/<Label> | grep state`，或看「服务」页。
+3. **节点本身失效**：节点页点「测试全部」。整批全红多半是订阅过期或机场出问题，
+   个别红是那个节点的事。
+4. **看 sing-box 的错误日志**（「服务」页，或 `~/.config/sing-box/surge-vless-error.log`）。
+   握手失败、Reality 参数不对都会写在这里。
 
-1. 先看 RouteBar 仪表盘自检。
-2. 到“服务管理”确认 LaunchAgent、sing-box 配置、Surge 配置是否存在。
-3. 到“日志 → 更新记录”确认订阅拉取和配置生成是否成功。
-4. 到“日志 → 错误日志”查看 `surge-vless-error.log`。
-5. 到“节点管理”单测一个节点延迟。
-6. 如果配置生成失败，运行：`/opt/homebrew/bin/sing-box check -c ~/.config/sing-box/surge-vless.json`。
+### 代理能连，但某些网站打不开
+
+多半是**域名在本机解析**的。SOCKS5 有两种用法：`socks5` 由客户端解析域名再把 IP 交给代理，
+`socks5h` 把域名原样交给代理去解析。前者拿到的是本地 DNS 的答案，被污染的域名会连到
+错误的地址上，表现为握手失败或连上了打不开。
+
+- curl / 环境变量：写 `socks5h://127.0.0.1:<端口>`。
+- 客户端里有「远程解析 DNS」「Proxy DNS」之类的开关：打开它。
+- HTTP 代理方式没有这个问题，域名本来就交给代理解析。
+
+同一个端口两种协议都收，实在拿不准就先用 HTTP 代理试一次，能通就说明是 DNS 的事。
+
+### 节点比订阅里少
+
+**预期行为**：只解析 VLESS Reality 链接，ss / trojan / vmess 会被静默跳过。
+另外多个订阅里的同一节点（按服务器 + 端口 + UUID + 公钥 + shortID 的指纹判断）会合并成一个，
+概览页的「去重」指标显示合并掉了多少。
+
+### Surge 里看不到节点 / 还是旧的
+
+- **用订阅地址方式**：Surge 会缓存上一次拉到的列表。RouteBar 没运行时那个端口是关的，
+  Surge 拉不到新的但旧的仍能用。确认 RouteBar 在跑，然后在 Surge 里手动刷新策略集。
+- **用写入配置方式**：确认「环境」页的 Surge 配置路径指对了，且那份配置**正在被 Surge 使用**
+  （改错一份没在用的配置是最常见的情况）。
+- **名字全变了**：检查是不是改过节点命名模板。策略组里手工引用过旧名字的地方需要一并更新，
+  见 README 的「节点命名」。
+
+### 服务起不来
+
+- **配置校验失败**：安装前会先跑 `sing-box check`，失败时正式配置一个字节都不会动。
+  错误内容在运行日志里。可以自己复现：
+  ```sh
+  sing-box check -c ~/.config/sing-box/surge-vless.json
+  ```
+- **LaunchAgent 不对**：「环境」页会显示它是缺失、过期、还是别人创建的。三种都有对应按钮。
+- **改了路径但没重新生成 plist**：plist 里的二进制与配置路径是生成时写死的，
+  改完设置要在「环境」页重新生成一次。
+
+### 本地服务起不来（网页和命令行连不上）
+
+最常见的是**端口被占用**，此时「服务」页会直接显示「端口 7899 已被占用，请在设置里换一个」。
+查是谁占着：
+
+```sh
+lsof -nP -iTCP:7899 -sTCP:LISTEN
+```
+
+如果占用者也是 RouteBar，说明**同时跑了两个实例**（比如 Xcode 里一个、`/Applications` 里一个）。
+菜单栏面板右上角的版本号与 `DEBUG` 标记可以区分它们，悬停还能看到各自的 bundle 路径。
+
+### 测速数字看着不对
+
+- 测的是 **Surge/客户端 → 本地 sing-box → Reality 节点 → 测试站点**的端到端往返，
+  天然包含多段握手，**不能套用直连节点常见的 100/200 ms 阈值**。RouteBar 用的分档是
+  600 / 1000 ms。
+- 换测速端点后所有数字会整体平移，**不要和换之前的比**。运行日志会记录每次用了哪个端点。
+- 测速要经本地端口，所以 sing-box 必须在跑。
+
+### 想看更早的日志
+
+应用内的运行日志只保留最近 1000 条且重启清空，但同一批事件会镜像到系统统一日志：
+
+```sh
+log show --last 2h --predicate 'subsystem BEGINSWITH "com.liuyude.RouteBar"'
+```
+
+## 完全卸载
+
+RouteBar 没有安装器，也就没有卸载器。四步清干净：
+
+```sh
+# 1. 停掉并卸载 sing-box 服务（Label 见「环境」页，默认由 bundle id 派生）
+LABEL="com.liuyude.RouteBar.sing-box"
+launchctl bootout "gui/$(id -u)/$LABEL"
+rm -f ~/Library/LaunchAgents/"$LABEL".plist
+
+# 2. 删掉应用数据（订阅元数据、节点、设置、生成副本）
+rm -rf ~/Library/Application\ Support/RouteBar
+
+# 3. 删掉钥匙串里的订阅地址（每条订阅一条，重复执行到报「找不到」为止）
+security delete-generic-password -s com.liuyude.RouteBar.subscriptions
+
+# 4. 删掉应用本身
+rm -rf /Applications/RouteBar.app
+```
+
+`~/.config/sing-box/` 下的配置与日志是给 sing-box 用的，按需自行删除；
+sing-box 本体用 `brew uninstall sing-box` 卸载。Surge 那边：用订阅地址方式的话，
+把策略组里那行 `policy-path=` 删掉即可；用写入配置方式的话，`[Proxy]` 段里的
+RouteBar 代理需要手工清理，同目录下的 `.routebar-backup` 是覆盖前的原始版本。
