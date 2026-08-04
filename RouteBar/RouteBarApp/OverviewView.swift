@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// 概览页：一眼看清「现在能不能用」，以及有没有需要动手的事。
@@ -8,12 +9,21 @@ struct OverviewView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 statusHeader
+                // 还没配完时，引导排在一切之前——此时那几个指标全是 0，自检也全是红的，
+                // 先看到「下一步做什么」比先看到「哪里不对」有用得多。
+                if !model.setupChecklist.isComplete {
+                    SetupChecklistCard()
+                }
                 metrics
                 healthSection
                 pipelineSection
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        // 用户可能刚在系统设置里改了登录项，或在别处装好了 sing-box，回到窗口时重新读一次。
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.refreshLaunchAtLogin()
         }
     }
 

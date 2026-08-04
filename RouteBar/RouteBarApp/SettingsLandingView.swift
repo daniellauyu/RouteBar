@@ -13,7 +13,6 @@ struct SettingsLandingView: View {
     @AppStorage("latencyTestURL") private var latencyTestURL = LatencyTestEndpoint.fallback.rawValue
     @AppStorage("latencySamples") private var latencySamples = 3
     @AppStorage("latencyTestUsesCustom") private var usesCustomEndpoint = false
-    @State private var loginItem = LoginItem.state
     /// 自定义地址的编辑缓冲。
     ///
     /// 不直接绑到 `latencyTestURL`：那样每敲一个字符都会写进设置，中间态（`htt`、`https:/`）
@@ -219,13 +218,13 @@ struct SettingsLandingView: View {
                         VStack(alignment: .trailing, spacing: 8) {
                             // 用真实状态驱动开关，而不是本地布尔：注册成功不等于自启已生效。
                             Toggle("登录时自动启动 RouteBar", isOn: Binding(
-                                get: { loginItem.isOn },
-                                set: { loginItem = LoginItem.setEnabled($0) }
+                                get: { model.launchesAtLogin },
+                                set: { model.setLaunchAtLogin($0) }
                             ))
                             .labelsHidden()
                             .toggleStyle(.switch)
                             .controlSize(.small)
-                            if loginItem == .requiresApproval {
+                            if model.loginItemState == .requiresApproval {
                                 Button("打开登录项设置") { LoginItem.openSettings() }
                                     .controlSize(.small)
                             }
@@ -295,7 +294,7 @@ struct SettingsLandingView: View {
         }
         // 用户可能在系统设置里改了登录项，回到窗口时重读，别让开关停在旧值上。
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            loginItem = LoginItem.state
+            model.refreshLaunchAtLogin()
         }
         .onAppear {
             if usesCustomEndpoint, customEndpoint.isEmpty { customEndpoint = latencyTestURL }
@@ -396,7 +395,7 @@ struct SettingsLandingView: View {
     }
 
     private var loginItemDetail: String {
-        switch loginItem {
+        switch model.loginItemState {
         case .enabled, .disabled:
             "登录后自动运行，订阅按计划更新。"
         case .requiresApproval:
@@ -407,7 +406,7 @@ struct SettingsLandingView: View {
     }
 
     private var loginItemDetailColor: Color {
-        switch loginItem {
+        switch model.loginItemState {
         case .enabled, .disabled: .secondary
         case .requiresApproval, .failed: .orange
         }

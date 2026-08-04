@@ -4,6 +4,88 @@ RouteBar 是一个 macOS SwiftUI 应用：拉取机场订阅、解析并去重 V
 为每个启用节点生成一个 sing-box 本地 SOCKS 出口，再把这些出口注入 Surge 配置。
 分流规则仍由 Surge 决定，RouteBar 只负责把可用出口准备好并保持同步。
 
+## 安装
+
+需要先有这三样：
+
+- **macOS 26.3 或更新**（`LSMinimumSystemVersion`）
+- **Surge**，且有一份可用的配置
+- **sing-box**：`brew install sing-box`。RouteBar 不自带它，只调用它
+
+然后二选一。
+
+**自己构建**（推荐）。仓库里没有任何私有依赖，克隆后直接构建即可，也不会遇到下面的
+Gatekeeper 问题：
+
+```sh
+git clone <仓库地址> && cd RouteBar
+xcodebuild build -project RouteBar.xcodeproj -scheme RouteBar -destination 'platform=macOS'
+```
+
+**下载 Release**。这是个人自用项目，**没有做 Apple 公证**，从浏览器下载的包会被
+Gatekeeper 拦下（提示「无法打开，因为 Apple 无法检查其是否包含恶意软件」）。放行方式二选一：
+
+```sh
+# 拖进「应用程序」后，去掉下载隔离标记
+xattr -dr com.apple.quarantine /Applications/RouteBar.app
+```
+
+或者双击被拦下后，去「系统设置 → 隐私与安全性」，在最下面点「仍要打开」。
+
+> 这两步的含义是「我确认信任这个来源」。不放心的话就用上面的自己构建——源码全在这里。
+
+## 首次配置
+
+打开 RouteBar，**概览页顶部会出现一张「开始使用」清单**，按顺序做完即可，能代劳的都有按钮。
+必需项全部完成后这张清单会自动消失。
+
+| 步骤 | 做什么 | RouteBar 能不能代劳 |
+|---|---|---|
+| 1. 安装 sing-box | `brew install sing-box`，装完点「重新检测」 | ✗ 只能你自己装 |
+| 2. 创建配置目录 | 点「创建目录」 | ✓ |
+| 3. 安装 LaunchAgent | 点「去安装」，在「环境」页一键生成并加载 | ✓ |
+| 4. 添加订阅 | 粘贴机场订阅地址（只存钥匙串） | — |
+| 5. 接上 Surge | 见下 | 部分 |
+| 6. 启动 sing-box | 点「启动服务」 | ✓ |
+| 7.（建议）开机自启 | 点「打开」 | ✓ |
+
+第 5 步取决于「通用 → 输出到 Surge」选了哪种方式：
+
+- **本地订阅地址**（默认，推荐）：复制 RouteBar 给出的那一行，粘进 Surge 配置的
+  `[Proxy Group]` 段。完全不碰 Surge 配置文件，可与 sub.store 等外部订阅共存。
+
+  ```
+  🔰 RouteBar = select, policy-path=http://127.0.0.1:7899/<令牌>/proxies, update-interval=0
+  ```
+
+- **写入 Surge 配置**：需要先有一份含 `[Proxy]` 与 `[Proxy Group]` 两个段的配置，
+  并在「环境」页把路径指过去。RouteBar 只改写 `[Proxy]` 段和「sing-box 节点」策略组，
+  规则与其它策略组原样保留——但**该段是整段替换的**，里面除 RouteBar 之外的代理会消失。
+
+只解析 **VLESS Reality** 节点，订阅里的 ss / trojan / vmess 会被静默跳过，所以导入的节点
+可能比机场给的少。节点页每行都标了上游协议。
+
+### RouteBar 和 sing-box 的分工
+
+这一点最容易误解：**RouteBar 不运行 sing-box**，它只写配置、并通过 `launchctl` 指挥。
+真正持有 sing-box 进程的是 macOS 的 launchd。
+
+```
+Surge ──▶ 127.0.0.1:7701… (sing-box) ──▶ Reality 出口
+             ▲
+             └── RouteBar 只在旁边写配置：sing-box.json / LaunchAgent plist / Surge 那一侧
+```
+
+因此：
+
+- **退出 RouteBar，代理不会断。** plist 里写了 `RunAtLoad` 与 `KeepAlive`，sing-box
+  开机自启、崩溃自愈，与 RouteBar 是否运行无关。
+- 手动 `kill` sing-box 也没用，launchd 会立刻拉起来。要真停，用 RouteBar 的「停止服务」
+  （走 `launchctl bootout`）。
+- RouteBar 没运行时，少掉的是这四件事：订阅自动更新、测速、Web/命令行界面，以及
+  **本地订阅端口**——用订阅方式时 Surge 拉不到新节点（旧的仍在用它的缓存）。
+  这就是建议打开开机自启的原因。
+
 ## 架构
 
 源码按依赖方向分三层，位于 `RouteBar/` 下：

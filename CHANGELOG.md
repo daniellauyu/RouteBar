@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.8.0
+
+新增首次使用的分步引导，并给 README 补上面向使用者的安装与配置说明。
+
+- 概览页顶部新增「开始使用」清单：安装 sing-box → 创建目录 → 安装 LaunchAgent →
+  添加订阅 → 接上 Surge → 启动服务 →（建议）开机自启。每步只说「现在该做什么」，
+  能代劳的都带按钮，必需项做完后整张卡片消失。
+- 判定顺序放在 Domain 的 `SetupChecklist`，不写在视图里：概览页、README 和将来任何
+  入口都该用同一套顺序，各写一遍必然漂移。
+- 「Surge 那一步算不算做完」按输出方式分开判定——配置模式看托管配置在不在，
+  订阅模式看本地服务有没有在监听。合成一句话会在两种模式下各错一次。
+- 唯一 RouteBar 代劳不了的是装 sing-box，所以那一步直接给出可复制的
+  `brew install sing-box`，并配一个「重新检测」（只重探二进制路径，不动其它设置）。
+- 登录项状态收归 `AppModel.loginItemState`。原来设置页自己存一份 `@State`，
+  在别处打开自启后它会继续显示「未开启」，直到那个视图碰巧重建。
+- `surgePolicyGroupLine` 提到 `RouteBarSettings`，窗口与网页共用一份，不再各拼一遍。
+- README 新增「安装」「首次配置」「RouteBar 和 sing-box 的分工」三节：说明本项目
+  **没有做 Apple 公证**、下载版需要 `xattr -dr com.apple.quarantine` 或在系统设置里放行，
+  以及为什么退出 RouteBar 后代理仍然正常（sing-box 归 launchd 管，不归 RouteBar 管）。
+
+## v1.7.3
+
+优化节点测速口径（见 `LatencyMeasurement`）。
+
 ## v1.7.2
 
 关于页改用应用自己的图标（`NSApplication.applicationIconImage`），不再另挑一个 SF Symbol。

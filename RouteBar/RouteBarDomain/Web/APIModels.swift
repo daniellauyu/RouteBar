@@ -181,7 +181,7 @@ public struct APIOutput: nonisolated Codable, Sendable {
         subscriptionPort = settings.subscriptionPort
         self.serving = serving
         self.error = error
-        surgePolicyLine = "🔰 RouteBar = select, policy-path=\(settings.subscriptionURL), update-interval=0"
+        surgePolicyLine = settings.surgePolicyGroupLine
     }
 }
 

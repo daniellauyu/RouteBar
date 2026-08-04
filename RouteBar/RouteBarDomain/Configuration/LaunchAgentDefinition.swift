@@ -59,7 +59,7 @@ public struct LaunchAgentDefinition: Sendable, Equatable {
 }
 
 /// 磁盘上 LaunchAgent 的状态，决定「环境」页给出什么操作。
-public enum LaunchAgentState: Sendable, Equatable {
+public enum LaunchAgentState: Sendable, nonisolated Equatable {
     /// 文件不存在，可以直接创建。
     case missing
     /// RouteBar 写的，且内容与当前设置一致。

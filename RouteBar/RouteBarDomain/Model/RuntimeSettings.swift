@@ -64,6 +64,14 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
         "\(localBaseURL)/"
     }
 
+    /// 可以直接粘进 Surge `[Proxy Group]` 段的那一行，省得用户自己拼。
+    ///
+    /// 窗口、网页、命令行都要给出这一行，各拼一遍的话，改个参数就会有一处忘记跟上，
+    /// 而用户照着抄的偏偏可能是没跟上的那一处。
+    public nonisolated var surgePolicyGroupLine: String {
+        "🔰 RouteBar = select, policy-path=\(subscriptionURL), update-interval=0"
+    }
+
     private nonisolated var localBaseURL: String {
         "http://127.0.0.1:\(subscriptionPort)/\(subscriptionToken)"
     }

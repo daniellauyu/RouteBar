@@ -126,6 +126,37 @@ final class AppModel: ObservableObject {
     /// 当前生效的节点命名规则。与写进 Surge 配置的那一份同源（都出自快照）。
     var nodeNaming: NodeNaming { state?.nodeNaming ?? .default }
 
+    /// 首次使用的分步清单。
+    ///
+    /// 状态散在三处——环境自检在引擎快照里、本地服务是否在监听只有 AppModel 知道、
+    /// 登录项要现问系统——所以在这里汇总，判定顺序本身留在 Domain。
+    var setupChecklist: SetupChecklist {
+        SetupChecklist(
+            environment: environment ?? RouteBarEnvironmentReport(paths: runtimePaths) { _ in false },
+            subscriptionCount: subscriptions.count,
+            outputMode: settings.surgeOutputMode,
+            subscriptionServing: subscriptionServing,
+            serviceRunning: serviceState.isRunning,
+            launchesAtLogin: launchesAtLogin)
+    }
+
+    /// 登录项的真实状态。
+    ///
+    /// 放在这里而不是各视图各存一份 `@State`：设置页的开关和概览页的引导都要读它，
+    /// 各自持有的话，在一处打开后另一处会继续显示「未开启」，直到那个视图碰巧重建。
+    /// `register()` 成功不等于自启已生效（可能停在 `requiresApproval`），所以只信 `LoginItem.state`。
+    @Published private(set) var loginItemState = LoginItem.state
+
+    var launchesAtLogin: Bool { loginItemState.isOn }
+
+    func refreshLaunchAtLogin() {
+        loginItemState = LoginItem.state
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        loginItemState = LoginItem.setEnabled(enabled)
+    }
+
     var filteredSubscriptions: [SubscriptionRecord] {
         guard !subscriptionSearchText.isEmpty else { return subscriptions }
         return subscriptions.filter {
@@ -423,6 +454,26 @@ final class AppModel: ObservableObject {
 
     func createRequiredDirectories() {
         Task { apply(await coordinator.createRequiredDirectories(), alertOnError: true) }
+    }
+
+    /// 重新探测 sing-box 的位置（用户刚装完）。
+    ///
+    /// 只动这一个字段，不整份回落到默认设置——用户可能已经改过 Surge 配置路径或 Label，
+    /// 那些不该因为「重新检测一下二进制」而被冲掉。
+    func redetectSingBox() {
+        let probed = RouteBarSettings.singBoxSearchPaths.first {
+            FileManager.default.isExecutableFile(atPath: $0)
+        }
+        guard let probed, probed != settings.singBoxBinaryPath else {
+            // 路径没变也要重算一次自检：用户装的可能正是当前这条路径，
+            // 不刷新的话界面还停在「未找到」，看着像没生效。
+            refreshService()
+            return
+        }
+        var updated = settings
+        updated.singBoxBinaryPath = probed
+        log.notice("环境", "已探测到 sing-box：\(probed)")
+        saveSettings(updated)
     }
 
     func updateWindowDimensions(_ dimensions: WindowDimensions) {
