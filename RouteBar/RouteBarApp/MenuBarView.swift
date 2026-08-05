@@ -1,191 +1,109 @@
 import SwiftUI
 
-/// 菜单栏面板。
+/// 菜单栏菜单。
 ///
-/// 原来是 `.menuBarExtraStyle(.menu)` 的一长条系统菜单：十来个条目平铺，状态信息只能
-/// 塞成不可点的灰色文字，看一眼服务状态要先读三行字。改成 `.window` 之后，
-/// 上半部分是状态卡片，下半部分才是操作，和主窗口概览页读的是同一份 `AppViewState`。
+/// 这里用系统菜单（`.menuBarExtraStyle(.menu)`）而不是自绘面板。曾经改成 `.window` 想把
+/// 状态做成卡片，代价是整套菜单交互都得自己重写一遍：悬停高亮、按下反馈、禁用变灰、
+/// 键盘导航、Esc 关闭、点开后拖到某一项松手即触发——少写一样就不像 macOS 的菜单。
+/// 换回 `.menu` 之后这些全部由 AppKit 提供，代码里只剩「有哪些条目」这一件事。
+///
+/// 状态信息因此不能再画成卡片，改成菜单顶部的一组不可点条目（AppKit 渲染为灰字）。
+/// 这是菜单栏应用展示状态的通行做法，信息量没少，只是从「读卡片」变成「读前几行」。
 struct MenuBarView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider()
-
-            if !model.setupChecklist.isComplete {
-                setupRow
-                Divider()
-            }
-
-            if !model.healthMessages.isEmpty {
-                healthList
-                Divider()
-            }
-
-            serviceControls
-            Divider()
-
-            row("更新全部订阅", symbol: "arrow.clockwise", disabled: model.isUpdating) {
-                Task { await model.updateAll() }
-            }
-            row(model.autoUpdatePaused ? "恢复自动更新" : "暂停自动更新",
-                symbol: model.autoUpdatePaused ? "play.circle" : "pause.circle") {
-                model.toggleAutoUpdate()
-            }
-
-            Divider()
-
-            row("打开 RouteBar", symbol: "macwindow") { open(.overview) }
-            if model.settings.surgeOutputMode.servesSubscription {
-                row("打开 Web 界面", symbol: "safari") { model.openWebInterface() }
-            }
-            row("查看错误日志", symbol: "doc.text") { open(.service) }
-            row("退出 RouteBar", symbol: "power") { NSApplication.shared.terminate(nil) }
+        // 顶部状态区：不可点，AppKit 自动渲染成灰字。
+        Section(model.overall.label) {
+            Text(model.menuBarSummary)
+            Text(versionLine)
         }
-        .frame(width: 320)
-        .padding(.vertical, 4)
+
+        Divider()
+
+        if !model.setupChecklist.isComplete {
+            item(setupTitle, symbol: "list.bullet.clipboard") { open(.setup) }
+            Divider()
+        }
+
+        if !model.healthMessages.isEmpty {
+            Section("待处理") {
+                // 菜单条目是单行的，长文案交给 AppKit 截断，不再自己折行。
+                ForEach(model.healthMessages.prefix(3), id: \.self) { message in
+                    item(message, symbol: "exclamationmark.triangle") { open(.overview) }
+                }
+                if model.healthMessages.count > 3 {
+                    Text("另有 \(model.healthMessages.count - 3) 项…")
+                }
+            }
+            Divider()
+        }
+
+        if model.serviceState.isRunning {
+            item("停止 sing-box", symbol: "stop.fill") { model.stopService() }
+        } else {
+            item("启动 sing-box", symbol: "play.fill") { model.restartService() }
+        }
+        item("刷新状态", symbol: "checklist") { model.refreshService() }
+
+        Divider()
+
+        // 更新中不弹 ProgressView——菜单里放不下动画，改成条目本身变灰并说明在做什么。
+        item(model.isUpdating ? "正在更新订阅…" : "更新全部订阅", symbol: "arrow.clockwise") {
+            Task { await model.updateAll() }
+        }
+        .disabled(model.isUpdating)
+        item(model.autoUpdatePaused ? "恢复自动更新" : "暂停自动更新",
+             symbol: model.autoUpdatePaused ? "play.circle" : "pause.circle") {
+            model.toggleAutoUpdate()
+        }
+
+        Divider()
+
+        item("打开 RouteBar", symbol: "macwindow") { open(.overview) }
+        if model.settings.surgeOutputMode.servesSubscription {
+            item("打开 Web 界面", symbol: "safari") { model.openWebInterface() }
+        }
+        item("查看错误日志", symbol: "doc.text") { open(.service) }
+
+        Divider()
+
+        item("退出 RouteBar", symbol: "power") { NSApplication.shared.terminate(nil) }
+            .keyboardShortcut("q")
     }
 
-    private var header: some View {
-        HStack(spacing: 12) {
-            Image(systemName: model.overall.symbol)
-                .font(.title)
-                .foregroundStyle(model.overall.tint)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.overall.label).font(.headline)
-                Text(model.menuBarSummary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 4) {
-                versionBadge
-                if model.isUpdating { ProgressView().controlSize(.small) }
-            }
+    /// 一条带图标的菜单项。
+    ///
+    /// 图标必须写成 `Button` 直接持有的 `Label`：`Image` 单独放、或者外面再裹一层
+    /// `HStack`，AppKit 都只会取到文字，符号被丢掉。
+    private func item(_ title: String, symbol: String,
+                      action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
     }
 
     /// 版本号 + Debug 标记。
     ///
     /// 开发副本和已安装版本图标一模一样，两份同时跑着的时候，光看界面认不出眼前这个
     /// 菜单栏图标属于哪一份——「改了没生效」和「压根没在跑那一份」就分不开。
-    /// 版本号相同也照样分得清，因为 Debug 构建带标记；连构建类型都一样时，
-    /// 悬停看 tooltip 里的 bundle 路径。
-    private var versionBadge: some View {
-        HStack(spacing: 5) {
-            if AppVersion.isDevelopmentBuild {
-                Text("DEBUG")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1.5)
-                    .background(.orange, in: Capsule())
-            }
-            Text(verbatim: "v\(AppVersion.current)")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-        }
-        .help(Bundle.main.bundlePath)
+    /// 之前这里是个带 tooltip 的胶囊，菜单条目没有 tooltip，改成把标记直接写进文字。
+    private var versionLine: String {
+        let version = "版本 v\(AppVersion.current)"
+        return AppVersion.isDevelopmentBuild ? "\(version)（DEBUG）" : version
     }
 
     /// 还没配完时的入口。
     ///
     /// 这时候「自检」全是红的、指标全是 0，但那些都是**结果**；用户要的是「还差几步、
     /// 下一步做什么」。菜单栏又是他最先碰到的地方——不放在这里，就得指望他自己想到
-    /// 去开主窗口。配完之后整行消失。
-    private var setupRow: some View {
+    /// 去开主窗口。配完之后整条消失。
+    private var setupTitle: String {
         let checklist = model.setupChecklist
-        return Button {
-            open(.setup)
-        } label: {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "list.bullet.clipboard")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("还有 \(checklist.remainingRequiredCount) 步没配完")
-                        .font(.callout.weight(.medium))
-                    if let next = checklist.nextStep {
-                        Text("下一步：\(next.title)")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    /// 待处理项直接列在面板里——这是用户点开菜单栏最可能想知道的事。
-    private var healthList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("待处理")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-            ForEach(model.healthMessages.prefix(3), id: \.self) { message in
-                Button {
-                    open(.overview)
-                } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                        Text(message)
-                            .font(.callout)
-                            .foregroundStyle(.primary)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 7)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            if model.healthMessages.count > 3 {
-                Text("另有 \(model.healthMessages.count - 3) 项…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
-            }
-        }
-        .padding(.bottom, 4)
-    }
-
-    private var serviceControls: some View {
-        Group {
-            if model.serviceState.isRunning {
-                row("停止 sing-box", symbol: "stop.fill") { model.stopService() }
-            } else {
-                row("启动 sing-box", symbol: "play.fill") { model.restartService() }
-            }
-            row("刷新状态", symbol: "checklist") { model.refreshService() }
-        }
-    }
-
-    private func row(_ title: String, symbol: String, disabled: Bool = false,
-                     action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: symbol)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 7)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(disabled)
+        let head = "还有 \(checklist.remainingRequiredCount) 步没配完"
+        guard let next = checklist.nextStep else { return head }
+        return "\(head)：\(next.title)"
     }
 
     private func open(_ section: AppSection) {

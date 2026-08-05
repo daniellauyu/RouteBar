@@ -97,6 +97,6 @@ struct RouteBarApp: App {
             Image("MenuBarIcon")
                 .accessibilityLabel("RouteBar")
         }
-        .menuBarExtraStyle(.window)
+        .menuBarExtraStyle(.menu)
     }
 }
