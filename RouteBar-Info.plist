@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 其余键仍由 Xcode 生成（GENERATE_INFOPLIST_FILE = YES），这里只补 ATS。
+
+	     放在仓库根而不是 RouteBar/ 下：那个目录是 Xcode 的 synchronized group，
+	     丢进去会被自动加进 Copy Bundle Resources，构建时报「Info.plist 出现在资源阶段」。
+
+	     不关掉 ATS 的话，测速对 http:// 端点会在 0.2 秒内全军覆没：
+	     默认端点 http://www.gstatic.com/generate_204 是 captive portal 那套约定俗成的
+	     204 探测地址，本来就没有 https 版本，而 ATS 默认禁止 App 发起明文请求，
+	     URLSession 直接返回 -1022，界面上显示成「连接失败」——看起来像节点全挂了。
+	     订阅地址同理：不少机场只提供 http。
+
+	     这里用 NSAllowsArbitraryLoads 而不是给 gstatic.com 开白名单，是因为测速端点和
+	     订阅地址都是用户自己填的，白名单挡不住任何东西，只会挡住合法配置。
+	     真正的边界是「这个 App 只往用户填的地址和本机代理端口发请求」。-->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

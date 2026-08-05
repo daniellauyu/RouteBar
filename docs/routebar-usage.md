@@ -111,6 +111,28 @@ lsof -nP -iTCP:7899 -sTCP:LISTEN
 如果占用者也是 RouteBar，说明**同时跑了两个实例**（比如 Xcode 里一个、`/Applications` 里一个）。
 菜单栏面板右上角的版本号与 `DEBUG` 标记可以区分它们，悬停还能看到各自的 bundle 路径。
 
+### 所有节点测速都失败，但 Surge 里同样的节点是通的
+
+先看失败得有多快：**整批在一秒内全变红**基本不是节点的问题——真的连不上会各自等到超时。
+按 v1.10.2 之前的版本，最常见的原因是 App Transport Security 拦掉了明文的测速端点
+（默认的 `http://www.gstatic.com/generate_204` 就是明文），URLSession 直接返回 -1022，
+界面上只显示成「连接失败」。升级到 1.10.2 即可，或在设置里换成 `https://` 的端点。
+
+要确认是不是这一类，看系统日志里的原始错误码：
+
+```sh
+log show --last 10m --predicate 'subsystem BEGINSWITH "com.liuyude.RouteBar"' | grep 测速
+```
+
+节点本身能不能用，可以拿本机端口直接验（端口号在「节点」页每一行上）：
+
+```sh
+curl -x socks5h://127.0.0.1:7701 -o /dev/null -w '%{http_code} %{time_total}\n' \
+    http://www.gstatic.com/generate_204
+```
+
+这条通、而 RouteBar 里显示失败，说明问题在 RouteBar 一侧而不是节点。
+
 ### 测速数字看着不对
 
 - 测的是 **Surge/客户端 → 本地 sing-box → Reality 节点 → 测试站点**的端到端往返，
