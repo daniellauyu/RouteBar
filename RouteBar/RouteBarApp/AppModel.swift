@@ -39,6 +39,11 @@ final class AppModel: ObservableObject {
     func bootstrap() async {
         apply(await coordinator.bootstrap())
         runtimePathsCache = await coordinator.paths
+        // 监听状态是异步到达的，拉一次只能拿到「那一刻」的样子。订阅那一步是否算完成、
+        // 服务页显示服务中还是端口冲突，都读这两个字段，所以让服务器变一次推一次。
+        await server.observeState { [weak self] running, error in
+            await self?.applySubscriptionState(running: running, error: error)
+        }
         await syncServer()
         await refreshLogs()
         startScheduler()
@@ -136,6 +141,7 @@ final class AppModel: ObservableObject {
             subscriptionCount: subscriptions.count,
             outputMode: settings.surgeOutputMode,
             subscriptionServing: subscriptionServing,
+            subscriptionURL: subscriptionURL,
             serviceRunning: serviceState.isRunning,
             launchesAtLogin: launchesAtLogin)
     }
@@ -182,7 +188,13 @@ final class AppModel: ObservableObject {
         switch section {
         case .subscriptions: subscriptions.isEmpty ? nil : subscriptions.count
         case .nodes: mergedNodes.isEmpty ? nil : mergedNodes.count
-        case .environment: environment.map(\.missingCount).flatMap { $0 > 0 ? $0 : nil }
+        case .setup: setupChecklist.remainingRequiredCount > 0 ? setupChecklist.remainingRequiredCount : nil
+        // 还没配完时不再单独标环境页：那几项缺失正是引导里的前几步，两个数字同时挂在
+        // 侧栏上只会让人以为有两批不同的事要做。配完之后路径再出问题，它照常亮。
+        case .environment:
+            setupChecklist.remainingRequiredCount > 0
+                ? nil
+                : environment.map(\.missingCount).flatMap { $0 > 0 ? $0 : nil }
         default: nil
         }
     }
@@ -431,9 +443,16 @@ final class AppModel: ObservableObject {
 
     /// 监听要等 `NWListener` 进入 `.ready` 才算数，`start` 返回时通常还没到，
     /// 所以状态得单独取一次而不能拿 `start` 的返回值。
+    ///
+    /// 正常情况下服务器会自己推（见 `bootstrap` 里的 `observeState`），这里只是补一次
+    /// 兜底：网页 API 可能在窗口从未打开过时就被访问。
     func refreshSubscriptionStatus() async {
-        subscriptionServing = await server.isRunning
-        subscriptionError = await server.lastError
+        applySubscriptionState(running: await server.isRunning, error: await server.lastError)
+    }
+
+    private func applySubscriptionState(running: Bool, error: String?) {
+        subscriptionServing = running
+        subscriptionError = error
     }
 
     // MARK: - LaunchAgent

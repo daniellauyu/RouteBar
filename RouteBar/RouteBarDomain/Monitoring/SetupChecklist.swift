@@ -10,6 +10,9 @@ import Foundation
 /// 判定逻辑放在 Domain 而不是视图里——概览页、README 和将来任何入口都该用同一套顺序，
 /// 各写一遍必然会漂移。
 public struct SetupChecklist: Sendable, Equatable {
+    /// 唯一一件 RouteBar 代劳不了的事，命令原样给出来让用户复制。
+    public static let installCommand = "brew install sing-box"
+
     public let steps: [SetupStep]
 
     /// 全部**必需**步骤都完成了。可选项（开机自启）不计入。
@@ -30,6 +33,7 @@ public struct SetupChecklist: Sendable, Equatable {
                             subscriptionCount: Int,
                             outputMode: SurgeOutputMode,
                             subscriptionServing: Bool,
+                            subscriptionURL: String,
                             serviceRunning: Bool,
                             launchesAtLogin: Bool) {
         var steps: [SetupStep] = []
@@ -41,7 +45,8 @@ public struct SetupChecklist: Sendable, Equatable {
             done: "已找到 sing-box 可执行文件。",
             todo: "RouteBar 不自带 sing-box，需要你自己装一份。装好后点「重新检测」，"
                 + "路径也可以在「环境」页手工指定。",
-            isDone: environment.singBoxBinary == .ready))
+            isDone: environment.singBoxBinary == .ready,
+            handout: environment.singBoxBinary == .ready ? nil : Self.installCommand))
 
         // 2. 目录必须先于 LaunchAgent：plist 指向的配置文件写不进去，服务会起不来。
         steps.append(SetupStep(
@@ -81,15 +86,18 @@ public struct SetupChecklist: Sendable, Equatable {
                     + "规则与其它策略组原样保留。",
                 isDone: environment.surgeProfile == .ready))
         case .subscription, .both:
+            // 这一步的「完成」判的是本地服务在不在监听——那是 RouteBar 自己起的，用户没做任何事。
+            // 所以光说「已在监听」等于什么都没交代：他要做的是把下面这个地址复制走。
+            // 地址就是这一步的产出，跟着步骤一起给出来，不必再跳去服务页找。
             steps.append(SetupStep(
                 kind: .surge,
-                title: "接上代理客户端",
-                done: "本地订阅服务已在监听。Surge 用 policy-path 拉取即可；"
-                    + "别的客户端直接把 127.0.0.1:7701 起的端口当 SOCKS5/HTTP 代理用。",
-                todo: "本地订阅服务还没起来（通常是端口被占用，见「服务」页）。"
-                    + "起来之后，Surge 复制策略组行粘进 [Proxy Group] 段；用别的客户端则不必等它——"
-                    + "每个启用节点都有一个本机端口，直接填进去就能用。",
-                isDone: subscriptionServing))
+                title: "把订阅地址交给客户端",
+                done: "本地订阅服务已在监听。复制下面这个地址，填进 Surge 策略组的 policy-path 即可；"
+                    + "用别的客户端则不需要它——每个启用节点都有一个本机端口，直接当 SOCKS5/HTTP 代理填。",
+                todo: "本地订阅服务还没起来，地址暂时给不出来（通常是端口被占用，见「服务」页）。"
+                    + "用别的客户端的话不必等它——每个启用节点都有一个本机端口，直接填进去就能用。",
+                isDone: subscriptionServing,
+                handout: subscriptionServing ? subscriptionURL : nil))
         }
 
         steps.append(SetupStep(
@@ -129,17 +137,24 @@ public struct SetupStep: Sendable, Equatable, Identifiable {
     public let isDone: Bool
     /// 可选步骤不阻塞「配置完成」，但仍然会列出来。
     public let isOptional: Bool
+    /// 这一步要用户拿走的那串文本：待执行的命令，或做完之后产出的地址。
+    ///
+    /// 有些步骤的产出本身就是全部意义（订阅地址那一步尤其如此——服务是 RouteBar 自己起的，
+    /// 用户什么都没做它就绿了，真正要做的是把地址复制走）。让视图各自去别处凑这串文本，
+    /// 就会出现「步骤说完成了，但完成的是什么、东西在哪」没人回答的局面。
+    public let handout: String?
 
     public nonisolated var id: String { kind.rawValue }
     public nonisolated var detail: String { isDone ? done : todo }
 
     public nonisolated init(kind: Kind, title: String, done: String, todo: String,
-                            isDone: Bool, isOptional: Bool = false) {
+                            isDone: Bool, isOptional: Bool = false, handout: String? = nil) {
         self.kind = kind
         self.title = title
         self.done = done
         self.todo = todo
         self.isDone = isDone
         self.isOptional = isOptional
+        self.handout = handout
     }
 }

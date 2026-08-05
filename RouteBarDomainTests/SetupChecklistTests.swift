@@ -10,6 +10,8 @@ import Testing
         RouteBarEnvironmentReport(paths: paths) { existing.contains($0.path) }
     }
 
+    private static let subscriptionURL = "http://127.0.0.1:7788/tok/proxies"
+
     private func checklist(existing: Set<String> = [],
                            subscriptions: Int = 0,
                            mode: SurgeOutputMode = .subscription,
@@ -20,6 +22,7 @@ import Testing
                        subscriptionCount: subscriptions,
                        outputMode: mode,
                        subscriptionServing: serving,
+                       subscriptionURL: Self.subscriptionURL,
                        serviceRunning: running,
                        launchesAtLogin: login)
     }
@@ -115,6 +118,30 @@ import Testing
         #expect(!subscriptionOnly.needsSetup)
         // 事实本身不变，只是不再计入「还差几项」。
         #expect(subscriptionOnly.surgeProfile == .missing)
+    }
+
+    /// 每一步要交给用户的那串文本由清单本身给出，视图不必自己去别处凑。
+    ///
+    /// 订阅地址那一步尤其重要：它的「完成」判的是 RouteBar 自己起的本地服务在不在监听，
+    /// 用户什么都没做它就绿了——真正要做的事就是把这个地址复制走，不给出来等于没这一步。
+    @Test func stepsCarryTheTextTheUserHasToTakeAway() {
+        let fresh = checklist()
+        #expect(fresh.steps.first { $0.kind == .singBox }?.handout == SetupChecklist.installCommand)
+
+        // 装好之后就不必再给命令了。
+        let installed = checklist(existing: [paths.singBoxBinary.path])
+        #expect(installed.steps.first { $0.kind == .singBox }?.handout == nil)
+
+        let serving = checklist(mode: .subscription, serving: true)
+        #expect(serving.steps.first { $0.kind == .surge }?.handout == Self.subscriptionURL)
+
+        // 服务没起来时地址是死的，给了只会让人白贴一次。
+        let notServing = checklist(mode: .subscription, serving: false)
+        #expect(notServing.steps.first { $0.kind == .surge }?.handout == nil)
+
+        // 写配置文件的模式不经过本地服务，没有地址可交。
+        let profile = checklist(mode: .profile, serving: true)
+        #expect(profile.steps.first { $0.kind == .surge }?.handout == nil)
     }
 
     /// 未完成的步骤给的是「怎么做」，完成的给的是「已就位」——同一个字段两种用途，

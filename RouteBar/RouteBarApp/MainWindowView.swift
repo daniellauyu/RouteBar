@@ -115,6 +115,7 @@ struct MainWindowView: View {
     private var page: some View {
         switch model.selectedSection {
         case .overview: OverviewView()
+        case .setup: SetupView()
         case .subscriptions: SubscriptionsView()
         case .nodes: NodesView()
         case .service: ServiceView()

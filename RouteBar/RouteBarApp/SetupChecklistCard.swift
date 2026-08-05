@@ -1,27 +1,41 @@
 import SwiftUI
 
-/// 首次使用的分步引导，放在概览页顶部，全部必需项做完后自动消失。
+/// 首次使用的分步引导。
 ///
 /// 它和「环境」页不重复：环境页是体检报告加一堆可编辑路径，适合出问题时来排查；
 /// 这里只回答第一次打开时唯一的问题——**现在该做什么**，并且每一步都把能代劳的做掉。
+///
+/// 两个地方用同一份视图：概览页顶部（未配完时才出现，保证首次启动第一眼就看得到）
+/// 和常驻的「开始使用」页。差别只在标题与页脚——步骤列表本身必须是同一段代码，
+/// 各写一遍必然会在改了一处后漂移。
 struct SetupChecklistCard: View {
+    /// 摆在哪儿。页面版的标题由 `navigationTitle` 与 `PageBar` 承担，不必自带。
+    enum Context {
+        case overview
+        case page
+    }
+
     @EnvironmentObject private var model: AppModel
 
-    private static let installCommand = "brew install sing-box"
+    var context: Context = .overview
 
     var body: some View {
         let checklist = model.setupChecklist
         VStack(alignment: .leading, spacing: 12) {
-            header(checklist)
+            if context == .overview {
+                header(checklist)
+            }
             InfoCard {
                 ForEach(Array(checklist.steps.enumerated()), id: \.element.id) { offset, step in
                     if offset > 0 { Divider() }
                     row(step, number: offset + 1)
                 }
             }
-            Text("这一栏在必需项全部完成后会自动消失。随时可以到「环境」页查看完整的检测结果与路径。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if context == .overview {
+                Text("这一栏在必需项全部完成后会从概览页消失；侧栏的「开始使用」一直在，随时能回来。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -51,20 +65,35 @@ struct SetupChecklistCard: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if !step.isDone, step.kind == .singBox {
-                    // 唯一一件 RouteBar 做不了的事，所以把命令原样给出来，可复制可选中。
-                    Text(Self.installCommand)
-                        .font(.caption.monospaced())
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                if let handout = step.handout {
+                    self.handout(handout)
                 }
             }
             Spacer(minLength: 12)
             actions(step)
         }
         .padding(.vertical, 9)
+    }
+
+    /// 这一步要用户拿走的那串文本：命令或地址。
+    ///
+    /// 复制按钮就贴着文本本身，不进右侧的操作区——右侧那些是「让 RouteBar 去做某件事」，
+    /// 而这一颗是「把眼前这行拿走」，混在一起时用户认不出哪个按钮对应哪串东西。
+    /// 订阅地址那一步做完之后右侧本来空着（`actions` 对已完成步骤不出按钮），
+    /// 恰恰是它最需要给出东西的时候。
+    private func handout(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Text(text)
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+            Button("复制") { model.copyText(text) }
+                .controlSize(.small)
+        }
     }
 
     private func marker(_ step: SetupStep, number: Int) -> some View {
@@ -91,7 +120,6 @@ struct SetupChecklistCard: View {
             HStack(spacing: 6) {
                 switch step.kind {
                 case .singBox:
-                    Button("复制命令") { model.copyText(Self.installCommand) }
                     Button("重新检测") { model.redetectSingBox() }
                         .buttonStyle(.borderedProminent)
                 case .directories:

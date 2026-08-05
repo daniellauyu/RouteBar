@@ -14,6 +14,11 @@ struct MenuBarView: View {
             header
             Divider()
 
+            if !model.setupChecklist.isComplete {
+                setupRow
+                Divider()
+            }
+
             if !model.healthMessages.isEmpty {
                 healthList
                 Divider()
@@ -85,6 +90,38 @@ struct MenuBarView: View {
                 .foregroundStyle(.secondary)
         }
         .help(Bundle.main.bundlePath)
+    }
+
+    /// 还没配完时的入口。
+    ///
+    /// 这时候「自检」全是红的、指标全是 0，但那些都是**结果**；用户要的是「还差几步、
+    /// 下一步做什么」。菜单栏又是他最先碰到的地方——不放在这里，就得指望他自己想到
+    /// 去开主窗口。配完之后整行消失。
+    private var setupRow: some View {
+        let checklist = model.setupChecklist
+        return Button {
+            open(.setup)
+        } label: {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "list.bullet.clipboard")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("还有 \(checklist.remainingRequiredCount) 步没配完")
+                        .font(.callout.weight(.medium))
+                    if let next = checklist.nextStep {
+                        Text("下一步：\(next.title)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     /// 待处理项直接列在面板里——这是用户点开菜单栏最可能想知道的事。

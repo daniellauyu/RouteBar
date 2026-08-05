@@ -19,11 +19,38 @@ public actor LocalHTTPServer {
     private var handler: Handler?
     private var port: Int = 0
 
+    /// 每建一个监听器 +1。
+    ///
+    /// `NWListener.cancel()` 是异步的：被取代的那一个还会继续吐状态，而且吐的往往正是
+    /// `.failed(48)`——占着这个端口的不是别人，就是刚刚接班的新监听器。没有代次判断的话，
+    /// 一次正常的重启会让界面显示成「端口已被占用」，而服务其实好好地在跑。
+    private var generation: UInt64 = 0
+
     public init() {}
 
     public private(set) var isRunning = false
     /// 最近一次启动失败的原因，供界面展示（端口被占用是最常见的一种）。
     public private(set) var lastError: String?
+
+    /// 状态变化的推送出口。
+    ///
+    /// 监听状态是异步到达的：`start` 返回时通常还没 `.ready`，谁在那一刻读 `isRunning`
+    /// 都会读到 false。原来界面只在几个固定时机去拉一次（服务页出现、保存设置），
+    /// 于是「已经起来了但界面还停在未启动」是常态。改成起来了就通知。
+    private var observer: StateObserver?
+
+    public typealias StateObserver = @Sendable (Bool, String?) async -> Void
+
+    public func observeState(_ observer: @escaping StateObserver) {
+        self.observer = observer
+    }
+
+    private func notifyObserver() {
+        guard let observer else { return }
+        let running = isRunning
+        let error = lastError
+        Task { await observer(running, error) }
+    }
 
     /// 启动监听，或在已监听同一端口时就地换掉路由。
     ///
@@ -31,17 +58,26 @@ public actor LocalHTTPServer {
     /// 在这一刻的拉取失败。端口变了才需要真的重来。
     public func start(port: Int, handler: @escaping Handler) async {
         self.handler = handler
-        if isRunning, self.port == port { return }
+        // 端口没变就只换路由，不重建监听器。
+        //
+        // 这里判的是「有没有监听器」而不是 `isRunning`——后者要等 `.ready` 异步到达才为真，
+        // 启动后紧接着再调一次（保存设置、重新生成配置都会）就撞进那段空窗，
+        // 把刚建好的监听器取消掉再建一个，新的那个转头和自己尚未释放的 socket 抢同一个端口。
+        if listener != nil, self.port == port { return }
         stop()
         self.port = port
 
         guard let nwPort = NWEndpoint.Port(rawValue: UInt16(clamping: port)), port > 0, port < 65_536 else {
             lastError = "端口号非法：\(port)"
+            notifyObserver()
             return
         }
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: nwPort)
         parameters.allowLocalEndpointReuse = true
+
+        generation += 1
+        let generation = self.generation
 
         do {
             let listener = try NWListener(using: parameters)
@@ -50,7 +86,7 @@ public actor LocalHTTPServer {
                 Task { await self?.serve(connection) }
             }
             listener.stateUpdateHandler = { [weak self] state in
-                Task { await self?.apply(state) }
+                Task { await self?.apply(state, generation: generation) }
             }
             listener.start(queue: .global(qos: .userInitiated))
             lastError = nil
@@ -58,9 +94,15 @@ public actor LocalHTTPServer {
             lastError = error.localizedDescription
             CoreLog.subscription.error("本地服务启动失败：\(error.localizedDescription, privacy: .public)")
         }
+        notifyObserver()
     }
 
-    private func apply(_ state: NWListener.State) {
+    private func apply(_ state: NWListener.State, generation: UInt64) {
+        // 被取代的监听器的迟到状态一律丢弃：它已经不负责这个端口了，
+        // 让它改写 `isRunning` / `lastError` 就等于用上一代的结局盖掉这一代的事实。
+        guard generation == self.generation else { return }
+
+        defer { notifyObserver() }
         switch state {
         case .ready:
             isRunning = true
@@ -84,6 +126,11 @@ public actor LocalHTTPServer {
         listener?.cancel()
         listener = nil
         isRunning = false
+        // 之后到达的状态都属于上一代，作废掉。
+        generation += 1
+        // 主动停掉时上一次的失败原因已经过期，留着它会在下次启动失败前一直显示旧错。
+        lastError = nil
+        notifyObserver()
     }
 
     // MARK: - 连接处理
