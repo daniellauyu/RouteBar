@@ -58,6 +58,24 @@ public enum LaunchCtlStatusParser {
         return .stopped
     }
 
+    /// launchctl 是不是在说「这个服务压根不在域里」。
+    ///
+    /// plist 躺在 `~/Library/LaunchAgents/` 并不等于 launchd 认识它——手动 bootout 过、
+    /// 或者某次登录会话没把它 bootstrap 进来，都会让 `kickstart` 报
+    /// `Could not find service "..." in domain for user gui: 501`（退出码 113）。
+    /// 这跟「服务加载了但起不来」是两回事：前者只要 bootstrap 一次就好，
+    /// 后者才是真的配置或二进制有问题。
+    public nonisolated static func indicatesServiceNotLoaded(exitCode: Int32, output: String) -> Bool {
+        guard exitCode != 0 else { return false }
+        if exitCode == 113 { return true }
+        // 不同 macOS 版本的措辞有出入（"Could not find service" / "No such process"），
+        // 退出码也不总是 113，所以文本再兜一层。
+        let lowercased = output.lowercased()
+        return lowercased.contains("could not find service")
+            || lowercased.contains("no such process")
+            || lowercased.contains("service not loaded")
+    }
+
     private nonisolated static func firstCapture(in text: String, pattern: String) -> String? {
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),

@@ -93,6 +93,9 @@ RouteBar 只往四个地方写东西，全部在你的用户目录下，没有�
   sing-box check -c ~/.config/sing-box/surge-vless.json
   ```
 - **LaunchAgent 不对**：「环境」页会显示它是缺失、过期、还是别人创建的。三种都有对应按钮。
+- **plist 在但 launchd 不认**（报 `Could not find service "..." in domain for user gui: 501`）：
+  文件还在 `~/Library/LaunchAgents/`，只是这个登录会话没把它加载进来。点「启动」即可——
+  RouteBar 会自己 `launchctl bootstrap` 一次再拉起服务，不需要去终端敲命令。
 - **改了路径但没重新生成 plist**：plist 里的二进制与配置路径是生成时写死的，
   改完设置要在「环境」页重新生成一次。
 

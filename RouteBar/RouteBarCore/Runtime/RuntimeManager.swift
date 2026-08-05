@@ -22,18 +22,59 @@ public struct RuntimeManager: Sendable {
     }
 
     /// `kickstart -k`：已在跑就重启，没在跑就拉起来。启动与重启是同一条路径。
+    ///
+    /// plist 在盘上但没被 launchd 加载时（重装系统、手动 bootout、某次登录会话没接手），
+    /// kickstart 会报 `Could not find service ... in domain for user gui: 501`。
+    /// 这种情况下自己 bootstrap 一次再重试——把「去终端敲一行 launchctl bootstrap」
+    /// 这件事收进按钮里，而不是把 launchctl 的原始报错甩给用户。
     public nonisolated func restart() async -> ServiceState {
         guard let result = try? await runner.run("/bin/launchctl", ["kickstart", "-k", paths.launchctlTarget]) else {
             return .failed("无法调用 launchctl")
         }
-        return result.succeeded ? .running : .failed(result.output.trimmed())
+        if result.succeeded { return .running }
+        guard LaunchCtlStatusParser.indicatesServiceNotLoaded(exitCode: result.exitCode, output: result.output) else {
+            return .failed(result.output.trimmed())
+        }
+        return await bootstrapThenKickstart()
     }
 
     public nonisolated func stop() async -> ServiceState {
         guard let result = try? await runner.run("/bin/launchctl", ["bootout", paths.launchctlTarget]) else {
             return .failed("无法调用 launchctl")
         }
-        return result.succeeded ? .stopped : .failed(result.output.trimmed())
+        if result.succeeded { return .stopped }
+        // 没加载的服务本来就是停着的，报错没有意义。
+        guard !LaunchCtlStatusParser.indicatesServiceNotLoaded(exitCode: result.exitCode, output: result.output) else {
+            return .stopped
+        }
+        return .failed(result.output.trimmed())
+    }
+
+    /// 把盘上的 plist 重新 bootstrap 进 launchd，再拉起服务。
+    ///
+    /// 这里不重写 plist：文件可能是用户手写的（`launchAgentState() == .foreign`），
+    /// 加载别人的文件是安全的，覆盖不是——覆盖仍然只走「环境」页那条要确认的路径。
+    private nonisolated func bootstrapThenKickstart() async -> ServiceState {
+        guard FileManager.default.fileExists(atPath: paths.launchAgent.path) else {
+            return .failed("LaunchAgent 不存在：\(paths.launchAgent.path)，请先在「环境」页安装")
+        }
+        CoreLog.configuration.notice("服务未加载，重新 bootstrap：\(paths.label, privacy: .public)")
+        let domain = "gui/\(paths.userID)"
+        guard let bootstrap = try? await runner.run("/bin/launchctl",
+                                                    ["bootstrap", domain, paths.launchAgent.path]) else {
+            return .failed("无法调用 launchctl")
+        }
+        guard bootstrap.succeeded else {
+            return .failed("重新加载 LaunchAgent 失败：\(bootstrap.output.trimmed())")
+        }
+        // bootstrap 是否顺带把进程拉起来取决于 plist 里的 RunAtLoad，不能假设。
+        guard let kickstart = try? await runner.run("/bin/launchctl",
+                                                    ["kickstart", "-k", paths.launchctlTarget]) else {
+            return .failed("无法调用 launchctl")
+        }
+        guard kickstart.succeeded else { return .failed(kickstart.output.trimmed()) }
+        CoreLog.configuration.notice("已重新加载并启动：\(paths.label, privacy: .public)")
+        return .running
     }
 
     // MARK: - 安装

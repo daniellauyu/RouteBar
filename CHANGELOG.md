@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.10.1
+
+修复 plist 还在盘上、但 launchd 不认它时，点「启动」只会反复报错的问题。
+
+- **修复：`Could not find service "…" in domain for user gui: 501`**。启动走的是
+  `launchctl kickstart -k gui/<uid>/<label>`，而这条命令要求服务已经被 bootstrap 进
+  launchd。`~/Library/LaunchAgents/` 里有 plist 并不等于 launchd 认识它——手动
+  bootout 过、或者某次登录会话没把它加载进来，kickstart 就会报「找不到这个服务」
+  （退出码 113）。原来这条英文报错被原样当成失败原因显示出来，用户只能自己去终端敲
+  `launchctl bootstrap gui/501 ~/Library/LaunchAgents/<label>.plist`。现在 RouteBar
+  认出这种情况后自己 bootstrap 一次再重试，点一下「启动」就好。
+  三个入口（概览页、服务页、菜单栏）走的是同一条路径，都吃到这个修复。
+- 这里**不重写 plist**：盘上那份可能是用户手写的，加载别人的文件是安全的，覆盖不是——
+  覆盖仍然只走「环境」页那条要先给你过目的路径。plist 真的不在时，提示改为
+  「请先在『环境』页安装」，而不是把 launchctl 的英文原文丢出来。
+- 顺带修掉「停止」的一处误报：对没加载的服务跑 `bootout` 会失败，原来显示成「异常」，
+  现在按「已停止」处理——没加载的服务本来就是停着的。
+
 ## v1.10.0
 
 新手引导从「概览页顶部的一次性栏目」变成常驻页面，并修掉一个会让本地服务显示成

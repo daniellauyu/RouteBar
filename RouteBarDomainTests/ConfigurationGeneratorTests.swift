@@ -141,6 +141,21 @@ struct ConfigurationGeneratorTests {
         #expect(LaunchCtlStatusParser.parse(exitCode: 0, output: failed) == .failed("launchctl state exited, last exit code 1"))
         #expect(LaunchCtlStatusParser.parse(exitCode: 113, output: "Could not find service") == .stopped)
     }
+
+    /// 「服务没被加载」必须能和「加载了但起不来」区分开：前者 RouteBar 自己 bootstrap 一次就好，
+    /// 后者 bootstrap 也救不了，只会把真正的错误盖掉。
+    @Test func detectsUnloadedService() {
+        let notFound = #"Could not find service "com.daniellau.sing-box-surge" in domain for user gui: 501"#
+        #expect(LaunchCtlStatusParser.indicatesServiceNotLoaded(exitCode: 113, output: notFound))
+        #expect(LaunchCtlStatusParser.indicatesServiceNotLoaded(exitCode: 3, output: "Boot-out failed: 3: No such process"))
+        // 措辞变了但退出码还在（反之亦然）时不能漏判。
+        #expect(LaunchCtlStatusParser.indicatesServiceNotLoaded(exitCode: 113, output: ""))
+        #expect(LaunchCtlStatusParser.indicatesServiceNotLoaded(exitCode: 1, output: notFound))
+
+        #expect(!LaunchCtlStatusParser.indicatesServiceNotLoaded(exitCode: 0, output: ""))
+        #expect(!LaunchCtlStatusParser.indicatesServiceNotLoaded(exitCode: 5, output: "Input/output error"))
+        #expect(!LaunchCtlStatusParser.indicatesServiceNotLoaded(exitCode: 1, output: "Operation not permitted"))
+    }
 }
 
 @Suite struct LatencyTestEndpointTests {
