@@ -514,11 +514,14 @@ final class AppModel: ObservableObject {
     /// 目录和 LaunchAgent 照样该建好），全部跑完再一次性给结论。
     func runSetupAutomationAsync() async {
         guard !setupRun.isRunning else { return }
-        setupRun = SetupAutomationRun(isRunning: true)
+        let kinds = setupChecklist.steps.map(\.kind)
+        setupRun = SetupAutomationRun(isRunning: true, totalSteps: kinds.count)
         log.notice("引导", "开始一键配置")
 
-        for kind in setupChecklist.steps.map(\.kind) {
+        for kind in kinds {
             guard let step = setupChecklist.steps.first(where: { $0.kind == kind }) else { continue }
+            beginStep(kind)
+            defer { setupRun.completedSteps += 1 }
             if let reason = step.manualReason {
                 record(kind, .skipped(reason))
                 continue
@@ -533,7 +536,7 @@ final class AppModel: ObservableObject {
             record(kind, await perform(kind))
         }
 
-        setupRun.isRunning = false
+        endRun()
         let report = makeSetupReport()
         setupRun.report = report
         log.notice("引导", "一键配置结束：\(report.headline)")
@@ -545,13 +548,46 @@ final class AppModel: ObservableObject {
     /// 开机自启——那是他按「一键完成」时才表达的意图。
     func installSingBoxOnly() { Task { await runSingleSetupStep(.singBox) } }
 
+    /// 重跑单独一步。失败的那一行旁边那颗「重试」用它。
+    ///
+    /// 失败常常是一次性的（网络抖了、brew 的锁没释放），重跑一次就好；为此让用户
+    /// 把整条流水线再走一遍，等于逼他把已经成功的六步重做。
+    func retrySetupStep(_ kind: SetupStep.Kind) { Task { await runSingleSetupStep(kind) } }
+
     private func runSingleSetupStep(_ kind: SetupStep.Kind) async {
         guard !setupRun.isRunning else { return }
         // 单步不出总结条：用户只想补这一件事，回他一句「还差 3 步」是答非所问。
-        setupRun = SetupAutomationRun(isRunning: true)
+        // 但进度照给——单独装 sing-box 一样能跑好几分钟。
+        setupRun = SetupAutomationRun(isRunning: true, totalSteps: 1)
+        beginStep(kind)
         record(kind, .running)
         record(kind, await perform(kind))
+        setupRun.completedSteps = 1
+        endRun()
+    }
+
+    private func beginStep(_ kind: SetupStep.Kind) {
+        setupRun.currentKind = kind
+        setupRun.currentStartedAt = .now
+        // 上一步的实时输出必须清掉：留着的话，下一步刚开始的几秒里，界面上挂的是
+        // 上一步的最后一行，看着像这一步瞬间就干了别的事。
+        setupRun.statusText = nil
+        setupRun.fraction = nil
+    }
+
+    private func endRun() {
         setupRun.isRunning = false
+        setupRun.currentKind = nil
+        setupRun.currentStartedAt = nil
+        setupRun.statusText = nil
+        setupRun.fraction = nil
+    }
+
+    /// 收到当前步骤的一条实时进度。
+    private func reportSetupProgress(_ message: String, fraction: Double?) {
+        guard setupRun.isRunning else { return }
+        setupRun.statusText = message
+        setupRun.fraction = fraction
     }
 
     private func record(_ kind: SetupStep.Kind, _ outcome: SetupStepOutcome) {
@@ -593,10 +629,17 @@ final class AppModel: ObservableObject {
     }
 
     private func installSingBox() async -> SetupStepOutcome {
-        // 进度直接写进运行日志：brew 冷启动能跑好几分钟，界面上只有一个转圈的话，
-        // 用户无从判断是在下载还是已经卡死。
-        let installer = SingBoxInstaller { message in
-            Task { @MainActor in RuntimeLog.shared.info("引导", message) }
+        // 进度同时送两个地方：清单上那行实时状态（回答「还活着吗」），
+        // 以及运行日志（事后排查时要能回看完整过程）。
+        let installer = SingBoxInstaller { progress in
+            Task { @MainActor [weak self] in
+                self?.reportSetupProgress(progress.message, fraction: progress.fraction)
+                // 下载那一路每个百分点报一条，全写进日志会把其它记录冲掉；
+                // 带百分比的只更新界面，日志只留没有百分比的那些阶段性事件。
+                if progress.fraction == nil {
+                    RuntimeLog.shared.info("引导", progress.message)
+                }
+            }
         }
         do {
             let installed = try await installer.install()

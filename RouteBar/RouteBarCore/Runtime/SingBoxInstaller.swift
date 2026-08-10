@@ -34,9 +34,22 @@ public struct SingBoxInstaller: Sendable {
         public let method: Method
     }
 
-    /// 进度回调。安装可能跑上几分钟（brew 尤其），全程没有任何输出的话，
-    /// 界面上就是一个转不完的圈，用户无从判断是在下载还是已经卡死。
-    public typealias Progress = @Sendable (String) -> Void
+    /// 一次进度汇报。
+    ///
+    /// 安装可能跑上十几分钟（brew 冷启动尤其），全程没有输出的话界面上就是一个转不完的
+    /// 圈，用户无从判断是在下载还是已经挂死。所以每有动静就发一条。
+    public struct Progress: Sendable {
+        public let message: String
+        /// 0…1。只有下载阶段给得出来——brew 不报总量，硬凑一个百分比只会是假的。
+        public let fraction: Double?
+
+        public nonisolated init(_ message: String, fraction: Double? = nil) {
+            self.message = message
+            self.fraction = fraction
+        }
+    }
+
+    public typealias ProgressHandler = @Sendable (Progress) -> Void
 
     /// Homebrew 在 Apple Silicon 与 Intel 上的前缀不同，跟 sing-box 的探测同理。
     public nonisolated static let brewSearchPaths = [
@@ -44,13 +57,31 @@ public struct SingBoxInstaller: Sendable {
         "/usr/local/bin/brew",
     ]
 
-    private let managedDirectory: URL
-    private let progress: Progress
+    /// brew 跑得慢的头号原因，也是这台机器最可能卡死的地方。
+    ///
+    /// `brew install` 默认先做一次 auto-update——那要从 GitHub 拉整个 formula 仓库。
+    /// 而会走到「让 RouteBar 替我装」这条路的机器，恰恰常常是连 GitHub 都费劲的机器：
+    /// 于是用户看到的是「卡在第一步十几分钟」，实际卡的根本不是 sing-box 的下载。
+    /// 装一个已知的公式不需要更新索引，直接关掉。
+    private nonisolated static let brewEnvironment = [
+        "HOMEBREW_NO_AUTO_UPDATE": "1",
+        "HOMEBREW_NO_INSTALL_CLEANUP": "1",
+        // 提示文字对交互式终端有用，在这里只会把有效输出顶出视野。
+        "HOMEBREW_NO_ENV_HINTS": "1",
+    ]
 
-    public nonisolated init(managedDirectory: URL? = nil, progress: @escaping Progress = { _ in }) {
+    private let managedDirectory: URL
+    private let progress: ProgressHandler
+
+    public nonisolated init(managedDirectory: URL? = nil,
+                            progress: @escaping ProgressHandler = { _ in }) {
         self.managedDirectory = managedDirectory
             ?? RuntimePaths().appSupportDirectory.appendingPathComponent("bin", isDirectory: true)
         self.progress = progress
+    }
+
+    private nonisolated func report(_ message: String, fraction: Double? = nil) {
+        progress(Progress(message, fraction: fraction))
     }
 
     /// RouteBar 自己管的那份二进制的落点。
@@ -62,16 +93,16 @@ public struct SingBoxInstaller: Sendable {
 
     public nonisolated func install() async throws -> Outcome {
         if let brew = Self.brewPath() {
-            progress("找到 Homebrew（\(brew)），执行 brew install sing-box，首次安装可能要几分钟…")
+            report("找到 Homebrew（\(brew)），执行 brew install sing-box…")
             do {
                 return try await installWithHomebrew(brew)
             } catch {
                 // brew 失败的原因五花八门（没装命令行工具、源不通、tap 损坏），
                 // 逐一识别没有意义：直接换第二条路，把原因记进日志备查即可。
-                progress("Homebrew 这一趟没成：\(error.localizedDescription)。改用官方发布件。")
+                report("Homebrew 这一趟没成：\(error.localizedDescription)。改用官方发布件。")
             }
         } else {
-            progress("没有找到 Homebrew，直接取官方发布的二进制。")
+            report("没有找到 Homebrew，直接取官方发布的二进制。")
         }
         return try await installFromRelease()
     }
@@ -90,8 +121,15 @@ public struct SingBoxInstaller: Sendable {
     // MARK: - Homebrew
 
     private nonisolated func installWithHomebrew(_ brew: String) async throws -> Outcome {
-        // 默认 20 秒对 brew 完全不够：它要更新 tap、下载 bottle，冷启动十几分钟都可能。
-        let result = try await CommandRunner(timeoutSeconds: 900).run(brew, ["install", "sing-box"])
+        // 默认 20 秒对 brew 完全不够：它要解析依赖、下载 bottle，冷启动几分钟都可能。
+        let runner = CommandRunner(timeoutSeconds: 900, extraEnvironment: Self.brewEnvironment)
+        let progress = progress
+        let result = try await runner.run(brew, ["install", "sing-box"]) { line in
+            // brew 一行一行地报它在干什么（==> Fetching / ==> Pouring），原样转出去。
+            // 噪声行（警告、提示）也一并转——在「卡住了吗」这个问题面前，
+            // 任何一行新输出都比精心筛选后的沉默有用。
+            progress(Progress(line))
+        }
         guard result.succeeded else {
             throw InstallError.homebrewFailed(Self.tail(result.output))
         }
@@ -113,7 +151,7 @@ public struct SingBoxInstaller: Sendable {
         guard let asset = SingBoxRelease.asset(version: tag) else {
             throw InstallError.releaseLookupFailed("无法从版本号「\(tag)」推出下载地址")
         }
-        progress("最新版本 \(asset.version)（\(asset.architecture.rawValue)），开始下载 \(asset.archiveName)")
+        report("最新版本 \(asset.version)（\(asset.architecture.rawValue)），开始下载 \(asset.archiveName)")
 
         let workspace = try Self.makeWorkspace()
         defer { try? FileManager.default.removeItem(at: workspace) }
@@ -121,7 +159,7 @@ public struct SingBoxInstaller: Sendable {
         let archive = workspace.appendingPathComponent(asset.archiveName)
         try await download(asset.downloadURL, to: archive)
 
-        progress("解压 \(asset.archiveName)")
+        report("解压 \(asset.archiveName)")
         let extraction = try await CommandRunner(timeoutSeconds: 120)
             .run("/usr/bin/tar", ["-xzf", archive.path, "-C", workspace.path])
         guard extraction.succeeded else {
@@ -173,8 +211,15 @@ public struct SingBoxInstaller: Sendable {
         var request = URLRequest(url: url)
         request.setValue("RouteBar", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 300
+        // 用 delegate 拿字节数，而不是 `URLSession.bytes` 逐字节 await：后者对一个
+        // 二十几 MB 的包要在异步序列上迭代两千多万次，光调度开销就够烧掉几十秒 CPU，
+        // 为了一个进度条把下载本身拖慢，本末倒置。
+        let reporter = DownloadProgressReporter { [progress] fraction, written, total in
+            progress(Progress("正在下载 \(Self.megabytes(written)) / \(Self.megabytes(total))",
+                              fraction: fraction))
+        }
         do {
-            let (temporary, response) = try await URLSession.shared.download(for: request)
+            let (temporary, response) = try await URLSession.shared.download(for: request, delegate: reporter)
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 throw InstallError.downloadFailed("HTTP \(http.statusCode)：\(url.absoluteString)")
             }
@@ -185,6 +230,10 @@ public struct SingBoxInstaller: Sendable {
         } catch {
             throw InstallError.downloadFailed("\(url.absoluteString)：\(error.localizedDescription)")
         }
+    }
+
+    private nonisolated static func megabytes(_ bytes: Int64) -> String {
+        String(format: "%.1f MB", Double(bytes) / 1_048_576)
     }
 
     /// 把解压出来的二进制搬进 RouteBar 自己的目录，并给上可执行位。
@@ -211,7 +260,7 @@ public struct SingBoxInstaller: Sendable {
         // 上游已经签好时不动它——ad-hoc 覆盖等于把一个更强的签名换成更弱的。
         let verify = try? await runner.run("/usr/bin/codesign", ["--verify", "--strict", binary.path])
         guard verify?.succeeded != true else { return }
-        progress("发布件没有可用签名，就地做一次 ad-hoc 签名")
+        report("发布件没有可用签名，就地做一次 ad-hoc 签名")
         let signed = try await runner.run("/usr/bin/codesign", ["--force", "--sign", "-", binary.path])
         guard signed.succeeded else {
             throw InstallError.unusableBinary("ad-hoc 签名失败：\(Self.tail(signed.output))")
@@ -243,6 +292,38 @@ public struct SingBoxInstaller: Sendable {
         let all = trimmed.split(separator: "\n", omittingEmptySubsequences: false)
         guard all.count > lines else { return trimmed }
         return all.suffix(lines).joined(separator: "\n")
+    }
+
+    /// 只为拿下载进度而存在的 delegate。
+    ///
+    /// 节流到「整数百分比变了才报」：`didWriteData` 每收到一个数据包就调一次，
+    /// 一次下载几千回，全转成界面更新的话，进度条本身会比下载更占 CPU。
+    private final class DownloadProgressReporter: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+        private let onProgress: @Sendable (Double, Int64, Int64) -> Void
+        private var lastReportedPercent = -1
+
+        init(onProgress: @escaping @Sendable (Double, Int64, Int64) -> Void) {
+            self.onProgress = onProgress
+        }
+
+        func urlSession(_ session: URLSession,
+                        downloadTask: URLSessionDownloadTask,
+                        didWriteData bytesWritten: Int64,
+                        totalBytesWritten: Int64,
+                        totalBytesExpectedToWrite: Int64) {
+            // 服务器没给 Content-Length 时是 -1，这时算不出百分比，也就不该假装有。
+            guard totalBytesExpectedToWrite > 0 else { return }
+            let fraction = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+            let percent = Int(fraction * 100)
+            guard percent != lastReportedPercent else { return }
+            lastReportedPercent = percent
+            onProgress(fraction, totalBytesWritten, totalBytesExpectedToWrite)
+        }
+
+        /// 协议要求实现。文件的搬运由 async 版 `download(for:delegate:)` 负责，这里无事可做。
+        func urlSession(_ session: URLSession,
+                        downloadTask: URLSessionDownloadTask,
+                        didFinishDownloadingTo location: URL) {}
     }
 
     public enum InstallError: LocalizedError {
