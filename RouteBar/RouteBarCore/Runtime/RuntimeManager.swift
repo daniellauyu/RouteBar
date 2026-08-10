@@ -165,11 +165,59 @@ public struct RuntimeManager: Sendable {
                                                 withIntermediateDirectories: true)
     }
 
-    /// 读日志文件末尾若干字节，避免把几十 MB 的日志整个读进内存。
+    /// 读日志文件末尾若干字节。
+    ///
+    /// 用 `FileHandle` 定位到末尾再往回读，**不能**用 `Data(contentsOf:)` 再 `suffix`——
+    /// 那样每刷新一次就把整个文件读进内存，而这份文件实测能长到 65 MB，
+    /// 而且窗口每次激活、每次服务操作都会刷新一遍。注释说着「避免整个读进内存」，
+    /// 代码却恰恰是那么干的。
     public nonisolated func tail(_ url: URL, limit: Int = 20_000) -> String {
-        guard let data = try? Data(contentsOf: url), !data.isEmpty else { return "暂无日志：\(url.path)" }
-        let suffix = data.count > limit ? data.suffix(limit) : data[...]
-        return String(decoding: suffix, as: UTF8.self)
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return "暂无日志：\(url.path)" }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd(), size > 0 else { return "暂无日志：\(url.path)" }
+        let start = size > UInt64(limit) ? size - UInt64(limit) : 0
+        guard (try? handle.seek(toOffset: start)) != nil,
+              let data = try? handle.readToEnd(), !data.isEmpty else {
+            return "暂无日志：\(url.path)"
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// 从上次读到的位置继续往下读，用于把 sing-box 的新日志增量并进运行日志。
+    ///
+    /// 按字节偏移续读而不是「比对上次那一行」：日志里大量行是逐字重复的
+    /// （同一个目标反复失败），靠文本找位置必然会重复或漏掉一整段。
+    ///
+    /// 返回的偏移要原样交回下一次调用。文件被清空或换掉时（`size < offset`）从头开始。
+    public nonisolated func readNewLines(of url: URL, from offset: UInt64,
+                                         firstReadLimit: Int = 20_000) -> (text: String, offset: UInt64) {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return ("", 0) }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd() else { return ("", offset) }
+        // 首次读取（offset == 0）不把历史全灌进来：那可能是几十万行。只取末尾一小段。
+        var start = offset
+        if offset == 0, size > UInt64(firstReadLimit) {
+            start = size - UInt64(firstReadLimit)
+        } else if size < offset {
+            start = 0
+        }
+        guard start < size,
+              (try? handle.seek(toOffset: start)) != nil,
+              let data = try? handle.readToEnd() else { return ("", size) }
+        return (String(decoding: data, as: UTF8.self), size)
+    }
+
+    /// 清空 sing-box 的两份日志。
+    ///
+    /// 截断而不是删除：文件是 launchd 按 plist 里的路径打开的，删掉之后
+    /// sing-box 仍然握着那个已经不在目录里的 inode 继续写，磁盘一点没省下来。
+    public nonisolated func clearLogs() throws {
+        for url in [paths.singBoxLog, paths.singBoxErrorLog] {
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.truncate(atOffset: 0)
+            try handle.close()
+        }
     }
 
     public enum InstallError: LocalizedError {

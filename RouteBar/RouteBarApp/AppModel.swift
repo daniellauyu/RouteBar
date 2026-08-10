@@ -390,6 +390,35 @@ final class AppModel: ObservableObject {
         let tails = await coordinator.logTails()
         singBoxLogText = tails.standard
         singBoxErrorLogText = tails.error
+        await ingestSingBoxLog()
+    }
+
+    /// sing-box 日志读到哪儿了。按字节偏移续读，见 `RuntimeManager.readNewLines`。
+    private var singBoxLogOffset: UInt64 = 0
+
+    /// 把 sing-box 新写的日志并进运行日志。
+    ///
+    /// 只收 `.warning` 及以上。sing-box 的 INFO 是**每条连接一行**——真机上 35 天
+    /// 43 万行，全放进来的话，1000 条的环形缓冲会在几秒内被连接记录填满，
+    /// RouteBar 自己的事件一条都留不下，等于把这一页毁掉。生成的配置已经把级别
+    /// 降到 warn，这里再挡一道：老机器上那份历史日志里仍然全是 INFO。
+    private func ingestSingBoxLog() async {
+        let chunk = await coordinator.newSingBoxLog(since: singBoxLogOffset)
+        singBoxLogOffset = chunk.offset
+        guard !chunk.text.isEmpty else { return }
+        for line in SingBoxLogParser.parse(tail: chunk.text) where line.level >= .warning {
+            log.ingest(line)
+        }
+    }
+
+    func clearSingBoxLogs() {
+        Task {
+            apply(await coordinator.clearSingBoxLogs(), alertOnError: true)
+            // 文件被截断了，偏移必须跟着回到 0，否则下一次读会从一个已经不存在的
+            // 位置开始，新写进来的日志要等文件重新长到那个长度才看得见。
+            singBoxLogOffset = 0
+            await refreshLogs()
+        }
     }
 
     // MARK: - 设置

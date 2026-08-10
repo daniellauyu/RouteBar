@@ -78,8 +78,18 @@ public enum ConfigurationGenerator {
             ["inbound": [tag("in", index)], "action": "route", "outbound": tag("out", index),
              "udp_disable_domain_unmapping": true]
         }
+        // 级别 `warn` 而不是 `info`。
+        //
+        // `info` 会给**每一条出站连接**打一行。实测一台日常使用的机器上，35 天攒出
+        // 65 MB / 43 万行，其中 95% 是 `outbound connection to ...`——而 sing-box 把所有
+        // 级别都写进 stderr，于是 RouteBar 那个叫「错误日志」的文件里全是这种噪声，
+        // 真正的报错反而挑不出来。这些日志没有轮转，只会一直涨。
+        //
+        // 连接级别的记录不是没价值，但「哪条流量走了哪个节点」在节点页看端口就知道，
+        // 代价却是把唯一一份诊断文件淹掉。握手失败、配置错误、端口占用这些真正需要
+        // 排查的东西都是 warn 及以上，一条不会丢。
         let document: [String: Any] = [
-            "log": ["level": "info", "timestamp": true],
+            "log": ["level": "warn", "timestamp": true],
             "inbounds": inbounds,
             "outbounds": outbounds,
             "route": ["rules": rules],

@@ -24,12 +24,25 @@ extension LogLevel {
     }
 }
 
+/// 这条记录是谁写的。
+///
+/// 两边混在一列里显示是有意的——排查时你想知道的是「按时间顺序发生了什么」，
+/// 而不是「先看这份文件再看那份」。但必须标出来源：RouteBar 说的是它自己做了什么，
+/// sing-box 说的是数据面发生了什么，混淆两者会把「配置装好了」当成「连接成功了」。
+enum LogSource: String, CaseIterable, Identifiable, Sendable {
+    case routeBar = "RouteBar"
+    case singBox = "sing-box"
+
+    var id: String { rawValue }
+}
+
 struct RuntimeLogEntry: Identifiable {
     let id = UUID()
     let timestamp: Date
     let level: LogLevel
     let category: String
     let message: String
+    var source: LogSource = .routeBar
 }
 
 /// 应用内运行日志：内存环形缓冲（保留最近 1000 条，重启清空），可复制或导出。
@@ -49,11 +62,33 @@ final class RuntimeLog: ObservableObject {
     private init() {}
 
     func log(_ level: LogLevel, _ category: String, _ message: String) {
-        entries.append(RuntimeLogEntry(timestamp: Date(), level: level, category: category, message: message))
+        append(RuntimeLogEntry(timestamp: Date(), level: level, category: category, message: message))
+    }
+
+    /// 并入 sing-box 自己写的日志。
+    ///
+    /// 不镜像到系统统一日志：那些行已经在 sing-box 的日志文件里了，再复制一份进
+    /// `log show` 只会让同一件事出现两遍，还把 RouteBar 自己的记录冲淡。
+    func ingest(_ line: SingBoxLogLine) {
+        entries.append(RuntimeLogEntry(timestamp: line.timestamp ?? Date(),
+                                       level: line.level,
+                                       category: line.category,
+                                       message: line.message,
+                                       source: .singBox))
+        trim()
+    }
+
+    private func append(_ entry: RuntimeLogEntry) {
+        entries.append(entry)
+        trim()
+        logger.log(level: entry.level.osType,
+                   "[\(entry.category, privacy: .public)] \(entry.message, privacy: .public)")
+    }
+
+    private func trim() {
         if entries.count > capacity {
             entries.removeFirst(entries.count - capacity)
         }
-        logger.log(level: level.osType, "[\(category, privacy: .public)] \(message, privacy: .public)")
     }
 
     func info(_ category: String, _ message: String) { log(.info, category, message) }
@@ -68,7 +103,8 @@ final class RuntimeLog: ObservableObject {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return (entries ?? self.entries).map {
-            "[\(formatter.string(from: $0.timestamp))] [\($0.level.rawValue)] [\($0.category)] \($0.message)"
+            "[\(formatter.string(from: $0.timestamp))] [\($0.level.rawValue)] "
+                + "[\($0.source.rawValue)] [\($0.category)] \($0.message)"
         }.joined(separator: "\n")
     }
 }

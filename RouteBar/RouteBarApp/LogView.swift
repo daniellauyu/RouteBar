@@ -2,13 +2,16 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// 运行日志页：RouteBar 自身的诊断记录（订阅更新、配置生成、服务控制、测速）。
+/// 运行日志页：**唯一**一处诊断入口。
 ///
-/// 与「服务」页里的 sing-box 日志是两回事：那边是 sing-box 进程写的文件，
-/// 这边是 RouteBar 做了什么。两者分开，排查时才知道该看哪一份。
+/// RouteBar 自己的记录（订阅更新、配置生成、服务控制、测速）与 sing-box 报出来的问题
+/// 按时间混在一列里，用来源列区分。原来这两样分在两个页面，排查时要自己在脑子里
+/// 把两条时间线对齐——而它们描述的是同一件事的两侧：RouteBar 说「配置装好了」，
+/// sing-box 说「这个节点握手失败」，分开看谁也解释不了对方。
 struct LogView: View {
     @EnvironmentObject private var log: RuntimeLog
     @State private var minLevel: LogLevel = .info
+    @State private var source: LogSource?
     @State private var searchText = ""
 
     var body: some View {
@@ -20,8 +23,8 @@ struct LogView: View {
                     log.entries.isEmpty ? "暂无运行日志" : "没有匹配的日志",
                     systemImage: "doc.text.magnifyingglass",
                     description: Text(log.entries.isEmpty
-                                      ? "订阅更新、配置生成、服务控制等事件会记录在这里。"
-                                      : "调整级别或搜索条件试试。")
+                                      ? "RouteBar 的操作记录，以及 sing-box 报出来的问题，都会出现在这里。"
+                                      : "调整级别、来源或搜索条件试试。")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -36,6 +39,13 @@ struct LogView: View {
                 ForEach(LogLevel.allCases) { level in
                     Text("≥ \(level.rawValue)").tag(level)
                 }
+            }
+            .labelsHidden()
+            .frame(width: 120)
+
+            Picker("来源", selection: $source) {
+                Text("全部来源").tag(LogSource?.none)
+                ForEach(LogSource.allCases) { Text($0.rawValue).tag(Optional($0)) }
             }
             .labelsHidden()
             .frame(width: 120)
@@ -85,10 +95,16 @@ struct LogView: View {
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 64, alignment: .leading)
+            Text(entry.source.rawValue)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(entry.source == .singBox ? Color.purple : Color.secondary)
+                .frame(width: 58, alignment: .leading)
             Text(entry.category)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 48, alignment: .leading)
+                .frame(width: 92, alignment: .leading)
+                .lineLimit(1)
+                .truncationMode(.tail)
             Text(entry.message)
                 .font(.callout)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -100,6 +116,7 @@ struct LogView: View {
     private var visibleEntries: [RuntimeLogEntry] {
         log.entries.filter { entry in
             entry.level >= minLevel
+                && (source == nil || entry.source == source)
                 && (searchText.isEmpty
                     || entry.message.localizedCaseInsensitiveContains(searchText)
                     || entry.category.localizedCaseInsensitiveContains(searchText))

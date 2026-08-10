@@ -395,6 +395,23 @@ public actor SubscriptionCoordinator {
         (runtime.tail(runtime.paths.singBoxLog), runtime.tail(runtime.paths.singBoxErrorLog))
     }
 
+    /// sing-box 自上次以来新写的日志。
+    ///
+    /// 只读 stderr 那一份：sing-box 把**所有**级别都写进 stderr，stdout 那个文件
+    /// 从头到尾是空的（真机上验证过，0 字节）。两份都读只会把同一批行读两遍。
+    public func newSingBoxLog(since offset: UInt64) -> (text: String, offset: UInt64) {
+        runtime.readNewLines(of: runtime.paths.singBoxErrorLog, from: offset)
+    }
+
+    public func clearSingBoxLogs() -> CoordinatorOutcome {
+        do {
+            try runtime.clearLogs()
+            return outcome([.init(.notice, "日志", "已清空 sing-box 日志文件")])
+        } catch {
+            return outcome([.init(.error, "日志", "清空 sing-box 日志失败：\(error.localizedDescription)")])
+        }
+    }
+
     // MARK: - 设置
 
     public func saveSettings(_ newSettings: RouteBarSettings) async -> CoordinatorOutcome {

@@ -6,13 +6,6 @@ import SwiftUI
 /// 现在与 sing-box 进程有关的一切都在这一页，「运行日志」页只留 RouteBar 自身的记录。
 struct ServiceView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var selectedLog = LogFile.error
-
-    private enum LogFile: String, CaseIterable, Identifiable {
-        case error = "错误日志"
-        case standard = "标准日志"
-        var id: String { rawValue }
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -142,50 +135,60 @@ struct ServiceView: View {
         }
     }
 
+    /// sing-box 日志。
+    ///
+    /// 这里不再原样贴一大块文本：那份文件里 95% 是每条连接一行的 INFO，滚动着看
+    /// 根本挑不出问题。真正要紧的（握手失败、端口占用、配置错误）已经按时间并进
+    /// 「运行日志」，和 RouteBar 自己的记录排在一起。这张卡片只负责两件事：
+    /// 让你能打开原始文件，以及把它清掉。
     private var logCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("sing-box 日志").font(.headline)
-                Spacer()
-                Picker("", selection: $selectedLog) {
-                    ForEach(LogFile.allCases) { Text($0.rawValue).tag($0) }
+            Text("sing-box 日志").font(.headline)
+            InfoCard {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "text.book.closed")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 18)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("警告与错误已并入「运行日志」").font(.callout.weight(.medium))
+                        Text("和 RouteBar 自己的记录按时间排在一起，可按来源筛选。"
+                             + "sing-box 的日志级别是 warn，所以那份文件不会再因为逐条连接而疯长。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 12)
+                    Button("去看") { model.selectedSection = .logs }
+                        .controlSize(.small)
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 200)
-                Button("复制", systemImage: "doc.on.doc") { model.copyText(logText) }
-                Button("打开文件", systemImage: "doc.text") { model.open(logURL) }
+                .padding(.vertical, 6)
+                Divider()
+                PathRow(title: "sing-box 日志文件", url: model.runtimePaths.singBoxErrorLog)
+                Divider()
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("清空日志文件").font(.callout.weight(.medium))
+                        Text(logSizeDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 12)
+                    Button("清空", role: .destructive) { model.clearSingBoxLogs() }
+                        .controlSize(.small)
+                }
+                .padding(.vertical, 6)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-
-            ScrollView {
-                Text(logText)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-            }
-            .frame(height: 240)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.08)))
-
-            Text("排查顺序：先看错误日志有没有配置解析或 Reality 握手报错，再回到「运行日志」看 RouteBar 这边做了什么。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
-    private var logText: String {
-        switch selectedLog {
-        case .error: model.singBoxErrorLogText
-        case .standard: model.singBoxLogText
+    /// 直接把体积摆出来。旧版本用 info 级别跑了多久，这个数字就有多难看，
+    /// 而不给出来的话没人会想到去清。
+    private var logSizeDescription: String {
+        let url = model.runtimePaths.singBoxErrorLog
+        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else {
+            return "当前没有日志文件。"
         }
-    }
-
-    private var logURL: URL {
-        switch selectedLog {
-        case .error: model.runtimePaths.singBoxErrorLog
-        case .standard: model.runtimePaths.singBoxLog
-        }
+        let text = ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+        return "当前 \(text)。截断文件本身，sing-box 会继续往里写新的。"
     }
 }
