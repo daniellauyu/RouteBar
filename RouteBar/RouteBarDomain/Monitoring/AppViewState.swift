@@ -87,8 +87,13 @@ public struct AppViewState: Sendable {
         if environment.launchAgent == .missing { messages.append("LaunchAgent 未找到，sing-box 可能无法由 RouteBar 管理。") }
         // 只在真的要写 Surge 配置时才提。用订阅地址接别的客户端（甚至只用环境变量走
         // curl）的人没有那个文件，无条件报缺失等于给他们一条永远修不好的警告。
+        // 这条要连「怎么办」一起给：撞上它的人多半根本没装 Surge，只是被默认值带到了
+        // 「写入 Surge 配置」这条路上。光说「未找到」，他会以为自己缺了个必须装的东西，
+        // 而实际上他要做的是把输出方式改掉——节点端口本来就不依赖 Surge。
         if settings.outputMode.writesProfile, environment.surgeProfile == .missing {
-            messages.append("Surge 托管配置未找到，需要先生成或确认配置路径。")
+            messages.append("Surge 托管配置未找到，节点端口不受影响。不用 Surge 的话，"
+                + "去「设置」把输出方式改成「本地订阅地址」；要用就在 Surge 里新建一份配置，"
+                + "再去「环境」页把路径指向它。")
         }
         if let reason = serviceState.failureReason { messages.append("sing-box 状态异常：\(reason)") }
 

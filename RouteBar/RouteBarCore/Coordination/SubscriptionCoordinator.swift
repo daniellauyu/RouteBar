@@ -294,11 +294,17 @@ public actor SubscriptionCoordinator {
             // 只有 sing-box 那一份变了才值得重启：改节点名之类的改动只落在 Surge 一侧，
             // 顺手重启等于毫无必要地把全部连接断一次。
             let singBoxUnchanged = runtime.installedSingBoxConfigMatches(generated)
-            try await runtime.install(generated, writesSurgeProfile: settings.outputMode.writesProfile)
+            let report = try await runtime.install(generated,
+                                                   writesSurgeProfile: settings.outputMode.writesProfile)
             var messages: [OutcomeMessage] = [
                 .init(.notice, "配置",
                       "已生成并安装 \(generated.nodes.count) 个节点出口（\(settings.outputMode.label)）"),
             ]
+            // Surge 那一半没写成时给的是警告而不是错误：sing-box 已经装好，端口能用了。
+            // 报成错误的话，界面会弹一个模态框说「配置生成失败」，而配置其实生成成功了。
+            if let issue = report.surgeProfileIssue {
+                messages.append(.init(.warning, "配置", issue))
+            }
             guard forceRestart || !singBoxUnchanged else {
                 serviceState = await runtime.status()
                 messages.append(.init(.info, "服务", "sing-box 配置未变，无需重启"))

@@ -82,6 +82,31 @@ import Testing
             executableExists: { _ in false })
         #expect(none.singBoxBinaryPath == "/opt/homebrew/bin/sing-box")
     }
+
+    /// 没装 Surge 的机器不能默认「写入 Surge 配置」。
+    ///
+    /// 以前无条件默认 `.profile`，结果没装 Surge 的人一导入订阅就撞上「Surge 托管配置
+    /// 不存在」——而他根本不需要那份配置，他要的是节点页上那批端口。默认值必须在这台
+    /// 机器上真的走得通，否则新用户第一次用就卡死在一个与他无关的依赖上。
+    @Test func outputModeDefaultsAwayFromSurgeWhenSurgeIsNotInstalled() {
+        let profilesDirectory = "/Users/me/Library/Application Support/Surge/Profiles"
+
+        let withSurge = RouteBarSettings.defaults(
+            home: URL(fileURLWithPath: "/Users/me"),
+            bundleIdentifier: "com.example.RouteBar",
+            executableExists: { _ in true },
+            directoryExists: { $0 == profilesDirectory })
+        #expect(withSurge.outputMode == .profile)
+
+        let withoutSurge = RouteBarSettings.defaults(
+            home: URL(fileURLWithPath: "/Users/me"),
+            bundleIdentifier: "com.example.RouteBar",
+            executableExists: { _ in true },
+            directoryExists: { _ in false })
+        // 订阅地址那种方式不需要任何预先存在的文件，是唯一开箱就走得通的默认值。
+        #expect(withoutSurge.outputMode == .subscription)
+        #expect(!withoutSurge.outputMode.writesProfile)
+    }
 }
 
 @Suite struct LaunchAgentDiscoveryTests {

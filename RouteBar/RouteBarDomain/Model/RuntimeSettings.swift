@@ -128,12 +128,23 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
     public nonisolated static func defaults(
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
         bundleIdentifier: String? = Bundle.main.bundleIdentifier,
-        executableExists: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+        executableExists: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) },
+        directoryExists: (String) -> Bool = { path in
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+        }
     ) -> RouteBarSettings {
         // Label 从 bundle id 派生：写死成某个作者的名字，别人装上之后
         // 会看到一个与自己无关的服务标识，还得手工改掉才不别扭。
         let label = "\(bundleIdentifier ?? "com.liuyude.RouteBar").sing-box"
         let binary = singBoxSearchPaths.first(where: executableExists) ?? singBoxSearchPaths[0]
+        let surgeProfiles = home.appendingPathComponent("Library/Application Support/Surge/Profiles")
+        // 机器上没有 Surge 就不该默认往它的配置里写。
+        //
+        // 以前无条件默认 `.profile`，于是没装 Surge 的人一导入订阅就撞上「Surge 托管配置
+        // 不存在」——而他根本不需要那份配置，他要的是节点页上那批端口。默认值必须是一个
+        // 在这台机器上真的走得通的值，否则新用户第一次用就卡死在一个与他无关的依赖上。
+        let mode: OutputMode = directoryExists(surgeProfiles.path) ? .profile : .subscription
         return RouteBarSettings(
             singBoxBinaryPath: binary,
             singBoxConfigPath: home.appendingPathComponent(".config/sing-box/surge-vless.json").path,
@@ -141,7 +152,8 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
             singBoxErrorLogPath: home.appendingPathComponent(".config/sing-box/surge-vless-error.log").path,
             surgeProfilePath: home.appendingPathComponent("Library/Application Support/Surge/Profiles/surge-singbox.conf").path,
             launchAgentPath: home.appendingPathComponent("Library/LaunchAgents/\(label).plist").path,
-            launchAgentLabel: label
+            launchAgentLabel: label,
+            outputMode: mode
         )
     }
 }

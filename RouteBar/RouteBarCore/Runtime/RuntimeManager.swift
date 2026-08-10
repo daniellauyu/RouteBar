@@ -84,8 +84,21 @@ public struct RuntimeManager: Sendable {
     /// 顺序很关键——直接写正式配置再重启，配置有问题时服务会起不来，而旧配置已经没了，
     /// 代理直接全断。所以先写到 `routebar-next.json` 跑 `sing-box check`，
     /// 校验失败就原地抛错，正式配置一个字节都没动。
+    /// 一次安装做成了什么。
+    ///
+    /// Surge 那一半单独报，不走抛错：见 `install` 里的说明。
+    public struct InstallReport: Sendable, Equatable {
+        /// Surge 那一半没写成的原因。nil 表示写成了，或这次本来就不需要写。
+        public let surgeProfileIssue: String?
+
+        public nonisolated init(surgeProfileIssue: String? = nil) {
+            self.surgeProfileIssue = surgeProfileIssue
+        }
+    }
+
+    @discardableResult
     public nonisolated func install(_ generated: GeneratedConfiguration,
-                                    writesSurgeProfile: Bool = true) async throws {
+                                    writesSurgeProfile: Bool = true) async throws -> InstallReport {
         let candidate = paths.singBoxConfigDirectory.appendingPathComponent("routebar-next.json")
         try FileManager.default.createDirectory(at: paths.singBoxConfigDirectory, withIntermediateDirectories: true)
         try generated.singBoxJSON.write(to: candidate, options: .atomic)
@@ -101,18 +114,36 @@ public struct RuntimeManager: Sendable {
         // `[Proxy]` 段是整段替换的，不写它才能和 sub.store 之类的外部订阅共存。
         guard writesSurgeProfile else {
             CoreLog.configuration.notice("已安装 sing-box 配置：\(generated.nodes.count) 个节点（Surge 走本地订阅）")
-            return
+            return InstallReport()
         }
 
+        // Surge 那一半写不成**不是**整次安装失败。
+        //
+        // 到这里 sing-box 配置已经落盘了，本机端口是真的能用的——那才是 RouteBar 的产出。
+        // 原来这里直接抛错，调用方于是跳过重启：结果配置写了、服务没重启、界面弹一句
+        // 「配置生成失败」，用户以为节点没导进来，其实只是 Surge 那一侧没人接。
+        // 没装 Surge 的机器上，每次导入订阅都会撞上这个。
         let profileURL = paths.surgeProfile
         guard FileManager.default.fileExists(atPath: profileURL.path) else {
-            throw InstallError.missingSurgeProfile(profileURL.path)
+            CoreLog.configuration.error("Surge 托管配置不存在：\(profileURL.path, privacy: .public)")
+            return InstallReport(surgeProfileIssue:
+                "sing-box 那一侧已装好，节点端口可以用了；但 Surge 托管配置不存在（\(profileURL.path)），"
+                    + "这一半没写成。不用 Surge 的话，去「设置」把输出方式改成「本地订阅地址」，这条提示就不再出现；"
+                    + "要用的话，在 Surge 里新建一份配置，再去「环境」页把路径指向它。")
         }
-        let profile = try String(contentsOf: profileURL, encoding: .utf8)
-        let updated = try SurgeProfileUpdater.update(profile, with: generated)
-        try backup(profileURL)
-        try Data(updated.utf8).write(to: profileURL, options: .atomic)
+        do {
+            let profile = try String(contentsOf: profileURL, encoding: .utf8)
+            let updated = try SurgeProfileUpdater.update(profile, with: generated)
+            try backup(profileURL)
+            try Data(updated.utf8).write(to: profileURL, options: .atomic)
+        } catch {
+            // 同理：读不动、段落缺失、写不进去，都只影响 Surge 那一半。
+            CoreLog.configuration.error("改写 Surge 配置失败：\(error.localizedDescription, privacy: .public)")
+            return InstallReport(surgeProfileIssue:
+                "sing-box 那一侧已装好；改写 Surge 配置失败：\(error.localizedDescription)")
+        }
         CoreLog.configuration.notice("已安装配置：\(generated.nodes.count) 个节点")
+        return InstallReport()
     }
 
     /// 已安装的 sing-box 配置是否就是这一份。
