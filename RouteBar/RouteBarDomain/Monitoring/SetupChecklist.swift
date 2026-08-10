@@ -74,7 +74,7 @@ public struct SetupChecklist: Sendable, Equatable {
 
     public nonisolated init(environment: RouteBarEnvironmentReport,
                             subscriptionCount: Int,
-                            outputMode: SurgeOutputMode,
+                            outputMode: OutputMode,
                             subscriptionServing: Bool,
                             subscriptionURL: String,
                             serviceRunning: Bool,
@@ -123,17 +123,23 @@ public struct SetupChecklist: Sendable, Equatable {
             // 唯一必须由人提供的输入。
             automation: .manual("订阅地址只有你有，从机场后台复制过来粘一次即可。")))
 
-        // 5. 最后一公里：节点已经在本机跑起来了，但 Surge 还不知道它们在哪。
-        //    两种输出方式的「做完」标准完全不同，不能合并成一句话。
+        // 5. 最后一公里：端口已经在本机开好了，这一步只解决「让 Surge 也知道它们在哪」。
+        //    用别的客户端的人其实到上一步就能用了，所以这一步的两种文案都得说清这件事，
+        //    否则他会以为不配完这一步就用不了。两种输出方式的「做完」标准也完全不同，
+        //    不能合并成一句话。
         switch outputMode {
         case .profile:
             steps.append(SetupStep(
-                kind: .surge,
+                kind: .output,
                 title: "准备 Surge 配置",
                 done: "已找到托管的 Surge 配置。",
                 todo: "在 Surge 里新建一份配置，只要含 [Proxy] 和 [Proxy Group] 两个段即可，"
                     + "然后在「环境」页把路径指向它。RouteBar 只改写 [Proxy] 段和「sing-box 节点」策略组，"
-                    + "规则与其它策略组原样保留。",
+                    + "规则与其它策略组原样保留。"
+                    // 默认就是这种模式，所以每个新用户都会撞见这一步——包括根本不用 Surge 的人。
+                    // 不写这一句，他只会看到一个自己永远做不完的必需项。
+                    + "不用 Surge 的话这一步可以不管：节点页上的端口已经能用了，"
+                    + "在「设置」里把输出方式改掉，这一步就不再出现。",
                 isDone: environment.surgeProfile == .ready,
                 // 凭空造一份 Surge 配置比不造更糟：Surge 只认自己新建的文件，
                 // RouteBar 写出来的那份不会出现在它的配置列表里，用户反而要先删掉。
@@ -143,7 +149,7 @@ public struct SetupChecklist: Sendable, Equatable {
             // 所以光说「已在监听」等于什么都没交代：他要做的是把下面这个地址复制走。
             // 地址就是这一步的产出，跟着步骤一起给出来，不必再跳去服务页找。
             steps.append(SetupStep(
-                kind: .surge,
+                kind: .output,
                 title: "把订阅地址交给客户端",
                 done: "本地订阅服务已在监听。复制下面这个地址，填进 Surge 策略组的 policy-path 即可；"
                     + "用别的客户端则不需要它——每个启用节点都有一个本机端口，直接当 SOCKS5/HTTP 代理填。",
@@ -197,7 +203,7 @@ public enum SetupAutomation: Sendable, Equatable {
 
 public struct SetupStep: Sendable, Equatable, Identifiable {
     public enum Kind: String, Sendable {
-        case singBox, directories, launchAgent, subscription, surge, service, autoLaunch
+        case singBox, directories, launchAgent, subscription, output, service, autoLaunch
     }
 
     public let kind: Kind

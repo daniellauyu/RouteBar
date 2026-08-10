@@ -456,7 +456,7 @@ enum WebUIPage {
         const left = element('div', 'grow');
         const title = element('div', 'row');
         title.append(element('span', null, node.name));
-        // 机场给的名字和 Surge 里看到的名字是两回事（后者由命名模板拼），并排显示才对得上。
+        // 机场给的名字和 RouteBar 生成的名字是两回事（后者由命名模板拼），并排显示才对得上。
         if (node.outputName) {
           title.append(element('span', 'dim', '→'), element('span', 'mono', node.outputName));
         }

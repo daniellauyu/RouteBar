@@ -52,7 +52,10 @@ struct NodesView: View {
 
     private var listPane: some View {
         VStack(spacing: 0) {
-            PageBar("启用的节点会各自占用一个本地端口，并出现在 Surge 的代理列表里。") {
+            // 只说端口，不说 Surge：端口是无条件成立的事实，Surge 只在写配置那种模式下
+            // 才成立。原来那句「并出现在 Surge 的代理列表里」在订阅模式和不用 Surge 的人
+            // 那里都是错的，还顺手把这批端口说成了 Surge 的附属品。
+            PageBar("每个启用的节点占一个本机端口，同端口同时收 SOCKS5 和 HTTP，只监听 127.0.0.1。") {
                 Button {
                     Task { await model.testAllNodes() }
                 } label: {
@@ -177,7 +180,7 @@ struct NodesView: View {
         Dictionary(uniqueKeysWithValues: model.mergedNodes.enumerated().map { ($0.element.id, $0.offset + 1) })
     }
 
-    /// 节点 id → 在 Surge 里的名字。
+    /// 节点 id → 生成的节点名（两种 Surge 接法都用它，机场原名不参与）。
     ///
     /// 整批算一次再按 id 取：名字里的序号取自完整列表的位置，重名补号也只有知道全部名字
     /// 才算得出来，逐行现算既不对也慢。
@@ -237,7 +240,7 @@ private struct NodeRow: View {
     let item: PortMappedNode
     let number: Int?
     let source: String
-    /// 这个节点在 Surge 里的名字。与上面那行机场给的原名并列显示——
+    /// 由命名模板拼出来的节点名。与上面那行机场给的原名并列显示——
     /// 命名模板可配置之后，两者可以完全不一样，在策略组里找不到某个节点时要对的是这个。
     let outputName: String?
 
@@ -267,7 +270,7 @@ private struct NodeRow: View {
                             .font(.callout.monospaced())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
-                            .help("这个节点在 Surge 里的名字")
+                            .help("生成的节点名。写入 Surge 配置与订阅地址两种方式用的都是它")
                     }
                 }
                 Text(subtitle)

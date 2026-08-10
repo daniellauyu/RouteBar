@@ -188,7 +188,7 @@ struct EnvironmentView: View {
 
     private var report: RouteBarEnvironmentReport {
         RouteBarEnvironmentReport(paths: RuntimePaths(settings: draft),
-                                  expectsSurgeProfile: draft.surgeOutputMode.writesProfile) {
+                                  expectsSurgeProfile: draft.outputMode.writesProfile) {
             FileManager.default.fileExists(atPath: $0.path)
         }
     }
@@ -218,7 +218,7 @@ struct EnvironmentView: View {
                      hint: "缺失时点上方「创建缺失目录」即可")
             // 只输出订阅地址时 RouteBar 不碰 Surge 配置，这两项与当前配置无关，列出来只会
             // 让人以为还有东西没装好。换回「写入 Surge 配置」时它们会自己回来。
-            if draft.surgeOutputMode.writesProfile {
+            if draft.outputMode.writesProfile {
                 Divider()
                 checkRow("Surge Profiles 目录", report.surgeProfilesDirectory,
                          RuntimePaths(settings: draft).surgeProfilesDirectory.path,

@@ -98,7 +98,7 @@ public actor SubscriptionCoordinator {
 
     private func environmentReport() -> RouteBarEnvironmentReport {
         RouteBarEnvironmentReport(paths: runtime.paths,
-                                  expectsSurgeProfile: settings.surgeOutputMode.writesProfile) {
+                                  expectsSurgeProfile: settings.outputMode.writesProfile) {
             FileManager.default.fileExists(atPath: $0.path)
         }
     }
@@ -283,7 +283,7 @@ public actor SubscriptionCoordinator {
             }
             try stateStore.saveGenerated(generated)
             generatedAt = .now
-            if runtime.installedConfigurationMatches(generated, writesSurgeProfile: settings.surgeOutputMode.writesProfile),
+            if runtime.installedConfigurationMatches(generated, writesSurgeProfile: settings.outputMode.writesProfile),
                !forceRestart {
                 // 不重装也要把服务状态对齐：跳过分支是「什么都不做」，但期间 sing-box
                 // 可能已经被外部停掉或崩了，直接 return 会让界面一直显示旧状态，
@@ -294,10 +294,10 @@ public actor SubscriptionCoordinator {
             // 只有 sing-box 那一份变了才值得重启：改节点名之类的改动只落在 Surge 一侧，
             // 顺手重启等于毫无必要地把全部连接断一次。
             let singBoxUnchanged = runtime.installedSingBoxConfigMatches(generated)
-            try await runtime.install(generated, writesSurgeProfile: settings.surgeOutputMode.writesProfile)
+            try await runtime.install(generated, writesSurgeProfile: settings.outputMode.writesProfile)
             var messages: [OutcomeMessage] = [
                 .init(.notice, "配置",
-                      "已生成并安装 \(generated.nodes.count) 个节点出口（\(settings.surgeOutputMode.label)）"),
+                      "已生成并安装 \(generated.nodes.count) 个节点出口（\(settings.outputMode.label)）"),
             ]
             guard forceRestart || !singBoxUnchanged else {
                 serviceState = await runtime.status()

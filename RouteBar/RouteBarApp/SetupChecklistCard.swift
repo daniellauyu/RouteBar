@@ -179,8 +179,8 @@ struct SetupChecklistCard: View {
                 case .subscription:
                     Button("去添加") { model.selectedSection = .subscriptions }
                         .buttonStyle(.borderedProminent)
-                case .surge:
-                    if model.settings.surgeOutputMode.servesSubscription {
+                case .output:
+                    if model.settings.outputMode.servesSubscription {
                         Button("查看服务") { model.selectedSection = .service }
                     } else {
                         Button("去设置路径") { model.selectedSection = .environment }

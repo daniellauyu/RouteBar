@@ -74,7 +74,7 @@ struct ServiceView: View {
     /// 本地订阅地址。只在启用了该输出方式时出现。
     @ViewBuilder
     private var subscriptionCard: some View {
-        if model.settings.surgeOutputMode.servesSubscription {
+        if model.settings.outputMode.servesSubscription {
             InfoCard("本地服务") {
                 HStack(spacing: 10) {
                     Circle()
@@ -95,7 +95,9 @@ struct ServiceView: View {
                 }
                 Divider()
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("订阅地址（给 Surge）")
+                    // 「Surge 格式」而不是「给 Surge」：这地址吐的是 policy 行，
+                    // 别的客户端拿去用不了，它们要的是节点页上那批端口。
+                    Text("订阅地址（Surge 格式）")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text(model.subscriptionURL)

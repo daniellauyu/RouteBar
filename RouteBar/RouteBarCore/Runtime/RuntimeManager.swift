@@ -104,14 +104,14 @@ public struct RuntimeManager: Sendable {
             return
         }
 
-        let surgeURL = paths.surgeProfile
-        guard FileManager.default.fileExists(atPath: surgeURL.path) else {
-            throw InstallError.missingSurgeProfile(surgeURL.path)
+        let profileURL = paths.surgeProfile
+        guard FileManager.default.fileExists(atPath: profileURL.path) else {
+            throw InstallError.missingSurgeProfile(profileURL.path)
         }
-        let profile = try String(contentsOf: surgeURL, encoding: .utf8)
+        let profile = try String(contentsOf: profileURL, encoding: .utf8)
         let updated = try SurgeProfileUpdater.update(profile, with: generated)
-        try backup(surgeURL)
-        try Data(updated.utf8).write(to: surgeURL, options: .atomic)
+        try backup(profileURL)
+        try Data(updated.utf8).write(to: profileURL, options: .atomic)
         CoreLog.configuration.notice("已安装配置：\(generated.nodes.count) 个节点")
     }
 

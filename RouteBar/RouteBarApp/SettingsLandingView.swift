@@ -59,26 +59,31 @@ struct SettingsLandingView: View {
                     }
                 }
 
-                settingsSection("输出到 Surge") {
+                // 这一整节都是**可选的**，标题里必须说出来。
+                //
+                // RouteBar 的产出是节点页上那批本机端口，任何客户端填端口就能用；这里两个
+                // 选项吐的都是 Surge 语法，只是替 Surge 用户省掉手工拼配置。不点明的话，
+                // 用别的客户端的人会以为不配这一节就用不了——而他其实什么都不用配。
+                settingsSection("给 Surge 的现成接法（可选）") {
                     settingsRow(
                         title: "方式",
                         detail: outputModeDetail,
-                        detailColor: model.settings.surgeOutputMode == .profile ? .secondary : .primary
+                        detailColor: model.settings.outputMode == .profile ? .secondary : .primary
                     ) {
                         Picker("方式", selection: Binding(
-                            get: { model.settings.surgeOutputMode },
+                            get: { model.settings.outputMode },
                             set: { mode in
                                 var updated = model.settings
-                                updated.surgeOutputMode = mode
+                                updated.outputMode = mode
                                 model.saveSettings(updated)
                             }
                         )) {
-                            ForEach(SurgeOutputMode.allCases) { Text($0.label).tag($0) }
+                            ForEach(OutputMode.allCases) { Text($0.label).tag($0) }
                         }
                         .labelsHidden()
                         .frame(width: 150)
                     }
-                    if model.settings.surgeOutputMode.servesSubscription {
+                    if model.settings.outputMode.servesSubscription {
                         Divider()
                         settingsRow(
                             title: "订阅端口",
@@ -378,7 +383,7 @@ struct SettingsLandingView: View {
 
     /// 两种方式的代价不一样，得说清楚再让用户选。
     private var outputModeDetail: String {
-        switch model.settings.surgeOutputMode {
+        switch model.settings.outputMode {
         case .profile:
             "直接改写托管配置的 [Proxy] 段。注意该段是整段替换的——里面除 RouteBar 之外的代理会在下次生成时消失。"
         case .subscription:

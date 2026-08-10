@@ -18,7 +18,7 @@ struct AboutView: View {
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
-                        Text("把机场订阅编译成 sing-box 本地出口，并同步给 Surge。")
+                        Text("把机场订阅编译成一批本机代理端口，任何支持代理的客户端都能用；Surge 另有现成接法。")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -29,7 +29,7 @@ struct AboutView: View {
                     Label("订阅地址存放在钥匙串，不写入任何配置文件。", systemImage: "lock.fill")
                     Label("覆盖 sing-box 与 Surge 配置前都会留一份 .routebar-backup。", systemImage: "clock.arrow.circlepath")
                     Label("新配置先经 sing-box check 校验，通过后才替换正式文件。", systemImage: "checkmark.shield")
-                    Label("分流规则仍由 Surge 决定，RouteBar 只维护可用出口。", systemImage: "arrow.triangle.branch")
+                    Label("分流规则从来不由 RouteBar 决定，它只维护可用出口。", systemImage: "arrow.triangle.branch")
                 }
                 .font(.callout)
                 .foregroundStyle(.secondary)

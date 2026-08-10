@@ -1,12 +1,12 @@
 import Foundation
 
-/// 输出给 Surge 的节点名怎么拼。
+/// 生成的节点名怎么拼。
 ///
 /// 名字曾经写死成 `RouteBar 01 - 香港01`。写死的代价是：同一台机器上跑两份 RouteBar、
 /// 或者想按机场分组（`A机场 01 - …` / `B机场 01 - …`）时，只能改代码重编。
 /// 现在规则是一份模板字符串，全局一条，每条订阅还可以各自覆盖。
 ///
-/// **只影响 Surge 看到的名字**。sing-box 配置里的 `in-routebar-01` / `out-routebar-01`
+/// **只影响交给 Surge 的那两种输出里的名字**（写配置与订阅地址用的是同一份）。sing-box 配置里的 `in-routebar-01` / `out-routebar-01`
 /// 是内部标签，用户看不到，改它没有收益，反而要处理重名和非法字符——那两个 tag 必须
 /// 唯一且稳定，否则入站与出站的一一绑定会串台。
 public struct NodeNaming: Sendable, Equatable {

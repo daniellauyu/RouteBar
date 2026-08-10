@@ -126,7 +126,7 @@ public struct APINode: nonisolated Codable, Sendable {
     public var enabled: Bool
     /// 未启用的节点没有本地端口。
     public var localPort: Int?
-    /// 这个节点在 Surge 里叫什么（由命名模板拼出来）。未启用的节点不输出，因此为空。
+    /// 由命名模板拼出来的节点名。未启用的节点不输出，因此为空。
     public var outputName: String?
     public var latencyMilliseconds: Int?
     public var latencyOutcome: String?
@@ -159,7 +159,7 @@ public struct APINode: nonisolated Codable, Sendable {
     }
 }
 
-/// 节点交给 Surge 的方式，以及本地订阅服务当前是否可用。
+/// 额外为 Surge 铺的接法，以及本地订阅服务当前是否可用。本机端口与这些无关。
 public struct APIOutput: nonisolated Codable, Sendable {
     public var mode: String
     public var modeLabel: String
@@ -173,10 +173,10 @@ public struct APIOutput: nonisolated Codable, Sendable {
     public var surgePolicyLine: String
 
     public nonisolated init(settings: RouteBarSettings, serving: Bool, error: String?) {
-        mode = settings.surgeOutputMode.rawValue
-        modeLabel = settings.surgeOutputMode.label
-        servesSubscription = settings.surgeOutputMode.servesSubscription
-        writesProfile = settings.surgeOutputMode.writesProfile
+        mode = settings.outputMode.rawValue
+        modeLabel = settings.outputMode.label
+        servesSubscription = settings.outputMode.servesSubscription
+        writesProfile = settings.outputMode.writesProfile
         subscriptionURL = settings.subscriptionURL
         subscriptionPort = settings.subscriptionPort
         self.serving = serving

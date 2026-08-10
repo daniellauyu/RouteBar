@@ -142,7 +142,7 @@ final class AppModel: ObservableObject {
         SetupChecklist(
             environment: environment ?? RouteBarEnvironmentReport(paths: runtimePaths) { _ in false },
             subscriptionCount: subscriptions.count,
-            outputMode: settings.surgeOutputMode,
+            outputMode: settings.outputMode,
             subscriptionServing: subscriptionServing,
             subscriptionURL: subscriptionURL,
             serviceRunning: serviceState.isRunning,
@@ -408,7 +408,7 @@ final class AppModel: ObservableObject {
         // 设置（比如节点命名）会把正在响应这次请求的那个监听器一起拆掉。
         let listenerChanged = previous.subscriptionPort != newSettings.subscriptionPort
             || previous.subscriptionToken != newSettings.subscriptionToken
-            || previous.surgeOutputMode != newSettings.surgeOutputMode
+            || previous.outputMode != newSettings.outputMode
         if listenerChanged { await server.stop() }
         await syncServer()
         await refreshLogs()
@@ -431,7 +431,7 @@ final class AppModel: ObservableObject {
 
     func syncServer() async {
         let settings = self.settings
-        guard settings.surgeOutputMode.servesSubscription else {
+        guard settings.outputMode.servesSubscription else {
             await server.stop()
             subscriptionServing = false
             subscriptionError = nil
@@ -586,7 +586,7 @@ final class AppModel: ObservableObject {
         case .subscription: .skipped("需要你自己完成。")
         // 同理：写 Surge 配置那种模式也已被拦下，能走到这里的只有「输出订阅地址」，
         // 而那条路要做的就是把本地服务拉起来。
-        case .surge: await startLocalSubscriptionService()
+        case .output: await startLocalSubscriptionService()
         case .service: await startSingBoxForAutomation()
         case .autoLaunch: enableLaunchAtLoginForAutomation()
         }
@@ -750,7 +750,7 @@ final class AppModel: ObservableObject {
 
     /// 在默认浏览器里打开 Web 界面。
     func openWebInterface() {
-        guard settings.surgeOutputMode.servesSubscription else {
+        guard settings.outputMode.servesSubscription else {
             alertMessage = "Web 界面依赖本地服务，请先在「通用 → 输出到 Surge」里选择包含订阅地址的方式。"
             return
         }

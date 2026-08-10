@@ -13,8 +13,8 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
     public var surgeProfilePath: String
     public var launchAgentPath: String
     public var launchAgentLabel: String
-    /// 节点交给 Surge 的方式，见 `SurgeOutputMode`。
-    public var surgeOutputMode: SurgeOutputMode
+    /// 额外为 Surge 铺哪种接法，见 `OutputMode`。本机端口不受它影响，永远都在。
+    public var outputMode: OutputMode
     /// 本地订阅服务监听的端口。默认避开 sing-box 用的 7701 起的连续段。
     public var subscriptionPort: Int
     /// 订阅地址里的随机路径段。
@@ -22,7 +22,7 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
     /// 内容本身不含凭据（只有 `socks5, 127.0.0.1, <端口>`），但一个不可猜的路径能挡住
     /// 本机其它程序顺手扫端口扫出来，代价只有几行。首次需要时生成并存下来，保持地址稳定。
     public var subscriptionToken: String
-    /// 输出给 Surge 的节点名模板，占位符见 `NodeNaming`。
+    /// 生成的节点名模板，占位符见 `NodeNaming`。两种 Surge 接法用的都是它。
     /// 每条订阅可以用 `SubscriptionRecord.nodeNameTemplate` 覆盖它。
     public var nodeNameTemplate: String
 
@@ -33,7 +33,7 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
                             surgeProfilePath: String,
                             launchAgentPath: String,
                             launchAgentLabel: String,
-                            surgeOutputMode: SurgeOutputMode = .profile,
+                            outputMode: OutputMode = .profile,
                             subscriptionPort: Int = 7899,
                             subscriptionToken: String = RouteBarSettings.makeToken(),
                             nodeNameTemplate: String = NodeNaming.defaultTemplate) {
@@ -44,7 +44,7 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
         self.surgeProfilePath = surgeProfilePath
         self.launchAgentPath = launchAgentPath
         self.launchAgentLabel = launchAgentLabel
-        self.surgeOutputMode = surgeOutputMode
+        self.outputMode = outputMode
         self.subscriptionPort = subscriptionPort
         self.subscriptionToken = subscriptionToken
         self.nodeNameTemplate = nodeNameTemplate
@@ -85,7 +85,12 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
     private enum CodingKeys: String, CodingKey {
         case singBoxBinaryPath, singBoxConfigPath, singBoxLogPath, singBoxErrorLogPath
         case surgeProfilePath, launchAgentPath, launchAgentLabel
-        case surgeOutputMode, subscriptionPort, subscriptionToken, nodeNameTemplate
+        // 盘上的键名仍是 surgeOutputMode。字段本身早已不只属于 Surge（订阅地址那种
+        // 输出方式任何客户端都能用），所以属性改了名，但键名是**已经写进用户机器**的
+        // 东西——跟着改等于让所有老用户的输出方式在升级时被静默重置回默认值，
+        // 而这换来的只是一个没人会看见的字符串更好看。
+        case outputMode = "surgeOutputMode"
+        case subscriptionPort, subscriptionToken, nodeNameTemplate
     }
 
     public nonisolated init(from decoder: Decoder) throws {
@@ -98,7 +103,7 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
         surgeProfilePath = try container.decode(String.self, forKey: .surgeProfilePath)
         launchAgentPath = try container.decode(String.self, forKey: .launchAgentPath)
         launchAgentLabel = try container.decode(String.self, forKey: .launchAgentLabel)
-        surgeOutputMode = try container.decodeIfPresent(SurgeOutputMode.self, forKey: .surgeOutputMode) ?? .profile
+        outputMode = try container.decodeIfPresent(OutputMode.self, forKey: .outputMode) ?? .profile
         subscriptionPort = try container.decodeIfPresent(Int.self, forKey: .subscriptionPort) ?? fallback.subscriptionPort
         subscriptionToken = try container.decodeIfPresent(String.self, forKey: .subscriptionToken)
             ?? RouteBarSettings.makeToken()

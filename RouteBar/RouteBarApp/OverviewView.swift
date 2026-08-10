@@ -104,13 +104,27 @@ struct OverviewView: View {
                 Divider()
                 InfoRow("去重", "合并为 \(model.mergedNodes.count) 个 · 启用 \(model.enabledNodeCount) 个")
                 Divider()
-                InfoRow("sing-box", "每个启用节点一个本地 SOCKS 端口，自 7701 起")
+                InfoRow("sing-box", "每个启用节点一个本机端口，自 7701 起，同端口收 SOCKS5 与 HTTP")
                 Divider()
-                InfoRow("Surge", "这些端口写入 [Proxy] 与「sing-box 节点」策略组")
+                // 这一行是链路的真正终点：端口摆在那儿，谁来消费都行。
+                // 原来最后一行直接写「Surge」，等于宣布这批端口只有一个去处——
+                // 而在订阅模式下 RouteBar 根本不碰 [Proxy]，那句话连事实都不对。
+                InfoRow("任何客户端", "填 127.0.0.1 + 端口即可，不需要 Surge")
+                Divider()
+                InfoRow("Surge（可选）", surgeStageDetail)
             }
-            Text("分流规则仍由 Surge 决定；RouteBar 只负责把可用出口准备好并保持同步。")
+            Text("分流规则从来不由 RouteBar 决定，它只负责把可用出口准备好并保持同步。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Surge 那一段现在到底在做什么——两种模式做的事完全不同，写死一句必然有一半时候是错的。
+    private var surgeStageDetail: String {
+        switch model.settings.outputMode {
+        case .profile: "这些端口写入 [Proxy] 与「sing-box 节点」策略组"
+        case .subscription: "按 policy-path 提供订阅地址，配置文件原样不动"
+        case .both: "既写入 [Proxy] 段，也提供 policy-path 订阅地址"
         }
     }
 }

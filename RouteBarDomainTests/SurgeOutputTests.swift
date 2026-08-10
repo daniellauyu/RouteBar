@@ -59,11 +59,11 @@ import Testing
     }
 
     @Test func outputModeControlsWhichSideIsWritten() {
-        #expect(SurgeOutputMode.profile.writesProfile)
-        #expect(!SurgeOutputMode.profile.servesSubscription)
-        #expect(!SurgeOutputMode.subscription.writesProfile)
-        #expect(SurgeOutputMode.subscription.servesSubscription)
-        #expect(SurgeOutputMode.both.writesProfile && SurgeOutputMode.both.servesSubscription)
+        #expect(OutputMode.profile.writesProfile)
+        #expect(!OutputMode.profile.servesSubscription)
+        #expect(!OutputMode.subscription.writesProfile)
+        #expect(OutputMode.subscription.servesSubscription)
+        #expect(OutputMode.both.writesProfile && OutputMode.both.servesSubscription)
     }
 
     /// 新增字段不能让旧 settings.json 解不出来：`loadSettings` 解码失败会静默回落到
@@ -81,9 +81,35 @@ import Testing
         let decoded = try JSONDecoder().decode(RouteBarSettings.self, from: Data(legacy.utf8))
 
         #expect(decoded.launchAgentLabel == "com.daniellau.sing-box-surge")
-        #expect(decoded.surgeOutputMode == .profile)          // 默认保持原有行为
+        #expect(decoded.outputMode == .profile)          // 默认保持原有行为
         #expect(decoded.subscriptionPort == 7899)
         #expect(decoded.subscriptionToken.count == 16)        // 缺失时自动补一个
+    }
+
+    /// 属性叫 `outputMode`，但盘上的键名必须仍是 `surgeOutputMode`。
+    ///
+    /// 这两个名字不一致看着像遗漏，其实是有意的，所以用测试钉住：键名跟着属性改的话，
+    /// 所有老用户的 settings.json 里那一项会解不出来、静默回落到 `.profile`——
+    /// 本来只提供订阅地址的人，升级后 Surge 配置会突然被写进一段 `[Proxy]`。
+    @Test func outputModeKeepsItsLegacyKeyOnDisk() throws {
+        let stored = """
+        {"launchAgentLabel":"com.example.RouteBar.sing-box",
+         "launchAgentPath":"/Users/me/Library/LaunchAgents/x.plist",
+         "singBoxBinaryPath":"/opt/homebrew/bin/sing-box",
+         "singBoxConfigPath":"/Users/me/.config/sing-box/c.json",
+         "singBoxErrorLogPath":"/Users/me/e.log",
+         "singBoxLogPath":"/Users/me/o.log",
+         "surgeProfilePath":"/Users/me/s.conf",
+         "surgeOutputMode":"subscription"}
+        """
+        let decoded = try JSONDecoder().decode(RouteBarSettings.self, from: Data(stored.utf8))
+        #expect(decoded.outputMode == .subscription)
+
+        // 写回去也得是旧键名，否则这次读对了，下次启动又读不到。
+        let encoded = try JSONEncoder().encode(decoded)
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(object["surgeOutputMode"] as? String == "subscription")
+        #expect(object["outputMode"] == nil)
     }
 
     @Test func subscriptionURLIsLoopbackOnlyAndCarriesToken() {

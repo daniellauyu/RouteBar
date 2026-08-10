@@ -14,7 +14,7 @@ import Testing
 
     private func checklist(existing: Set<String> = [],
                            subscriptions: Int = 0,
-                           mode: SurgeOutputMode = .subscription,
+                           mode: OutputMode = .subscription,
                            serving: Bool = false,
                            running: Bool = false,
                            login: Bool = false) -> SetupChecklist {
@@ -60,7 +60,7 @@ import Testing
                                                paths.launchAgent.path]
 
         let profile = checklist(existing: everythingButSurge, subscriptions: 1, mode: .profile, serving: true)
-        #expect(profile.nextStep?.kind == .surge)          // 服务在监听也没用，配置模式看的是文件
+        #expect(profile.nextStep?.kind == .output)          // 服务在监听也没用，配置模式看的是文件
 
         let withProfile = checklist(existing: everythingButSurge.union([paths.surgeProfile.path]),
                                     subscriptions: 1, mode: .profile)
@@ -68,7 +68,7 @@ import Testing
 
         let subscription = checklist(existing: everythingButSurge.union([paths.surgeProfile.path]),
                                      subscriptions: 1, mode: .subscription, serving: false)
-        #expect(subscription.nextStep?.kind == .surge)     // 配置文件在也没用，订阅模式看的是端口
+        #expect(subscription.nextStep?.kind == .output)     // 配置文件在也没用，订阅模式看的是端口
     }
 
     /// 开机自启是建议项：没开也算配置完成，但仍要出现在清单里。
@@ -133,15 +133,15 @@ import Testing
         #expect(installed.steps.first { $0.kind == .singBox }?.handout == nil)
 
         let serving = checklist(mode: .subscription, serving: true)
-        #expect(serving.steps.first { $0.kind == .surge }?.handout == Self.subscriptionURL)
+        #expect(serving.steps.first { $0.kind == .output }?.handout == Self.subscriptionURL)
 
         // 服务没起来时地址是死的，给了只会让人白贴一次。
         let notServing = checklist(mode: .subscription, serving: false)
-        #expect(notServing.steps.first { $0.kind == .surge }?.handout == nil)
+        #expect(notServing.steps.first { $0.kind == .output }?.handout == nil)
 
         // 写配置文件的模式不经过本地服务，没有地址可交。
         let profile = checklist(mode: .profile, serving: true)
-        #expect(profile.steps.first { $0.kind == .surge }?.handout == nil)
+        #expect(profile.steps.first { $0.kind == .output }?.handout == nil)
     }
 
     /// 「一键完成」的边界：订阅地址和 Surge 配置之外的每一步 RouteBar 都能自己做完。
@@ -150,12 +150,12 @@ import Testing
     /// 新建的配置文件。判定必须留在清单里，否则加了新步骤时执行器那边会漏掉一处。
     @Test func onlyTheUserSuppliedStepsStayManual() {
         let manualKinds = Set(checklist(mode: .profile).manualSteps.map(\.kind))
-        #expect(manualKinds == [.subscription, .surge])
+        #expect(manualKinds == [.subscription, .output])
 
         // 输出订阅地址时，Surge 那一步做的是把 RouteBar 自己的本地服务拉起来，能自动。
         let subscriptionMode = checklist(mode: .subscription)
         #expect(subscriptionMode.manualSteps.map(\.kind) == [.subscription])
-        #expect(subscriptionMode.steps.first { $0.kind == .surge }?.automation == .automatic)
+        #expect(subscriptionMode.steps.first { $0.kind == .output }?.automation == .automatic)
 
         // 每条手动项都得说清为什么，光标一个「不能自动」等于把问题原样退回去。
         #expect(subscriptionMode.manualSteps.allSatisfy { $0.manualReason?.isEmpty == false })
@@ -166,7 +166,7 @@ import Testing
     @Test func automationSkipsWhatIsAlreadyDone() {
         let fresh = checklist(mode: .subscription)
         #expect(fresh.canAutomate)
-        #expect(fresh.automatableSteps.map(\.kind) == [.singBox, .directories, .launchAgent, .surge,
+        #expect(fresh.automatableSteps.map(\.kind) == [.singBox, .directories, .launchAgent, .output,
                                                        .service, .autoLaunch])
 
         let halfway = checklist(existing: [paths.singBoxBinary.path, paths.singBoxConfigDirectory.path],
