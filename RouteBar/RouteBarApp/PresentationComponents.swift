@@ -229,6 +229,27 @@ extension ServiceState {
     }
 }
 
+extension SetupStepOutcome {
+    /// 跳过用「手」而不是警告三角：这一步没出错，只是轮到用户动手了。
+    var symbol: String {
+        switch self {
+        case .running: "hourglass"
+        case .done: "checkmark.circle.fill"
+        case .skipped: "hand.raised.fill"
+        case .failed: "xmark.octagon.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .running: .blue
+        case .done: .green
+        case .skipped: .orange
+        case .failed: .red
+        }
+    }
+}
+
 extension SubscriptionStatus {
     var tint: Color {
         switch self {

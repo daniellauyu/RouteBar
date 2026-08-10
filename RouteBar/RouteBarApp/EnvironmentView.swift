@@ -210,7 +210,8 @@ struct EnvironmentView: View {
     private var checkCard: some View {
         InfoCard("检测结果") {
             checkRow("sing-box 可执行文件", report.singBoxBinary, RuntimePaths(settings: draft).singBoxBinary.path,
-                     hint: "通常由 Homebrew 安装：brew install sing-box")
+                     hint: "通常由 Homebrew 安装：brew install sing-box。"
+                         + "也可以从别的机器拷一份过来，把它的路径填进下面的「可执行文件」。")
             Divider()
             checkRow("sing-box 配置目录", report.singBoxConfigDirectory,
                      RuntimePaths(settings: draft).singBoxConfigDirectory.path,

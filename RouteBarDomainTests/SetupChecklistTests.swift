@@ -144,6 +144,48 @@ import Testing
         #expect(profile.steps.first { $0.kind == .surge }?.handout == nil)
     }
 
+    /// 「一键完成」的边界：订阅地址和 Surge 配置之外的每一步 RouteBar 都能自己做完。
+    ///
+    /// 这两项不是「暂时没做」而是原则上做不了——机场凭据只有用户有，Surge 只认自己
+    /// 新建的配置文件。判定必须留在清单里，否则加了新步骤时执行器那边会漏掉一处。
+    @Test func onlyTheUserSuppliedStepsStayManual() {
+        let manualKinds = Set(checklist(mode: .profile).manualSteps.map(\.kind))
+        #expect(manualKinds == [.subscription, .surge])
+
+        // 输出订阅地址时，Surge 那一步做的是把 RouteBar 自己的本地服务拉起来，能自动。
+        let subscriptionMode = checklist(mode: .subscription)
+        #expect(subscriptionMode.manualSteps.map(\.kind) == [.subscription])
+        #expect(subscriptionMode.steps.first { $0.kind == .surge }?.automation == .automatic)
+
+        // 每条手动项都得说清为什么，光标一个「不能自动」等于把问题原样退回去。
+        #expect(subscriptionMode.manualSteps.allSatisfy { $0.manualReason?.isEmpty == false })
+    }
+
+    /// 一键只跑「还没做完」的自动步骤：已经绿了的重跑一遍，轻则白等，
+    /// 重则把已经在跑的服务无谓地重启一次。
+    @Test func automationSkipsWhatIsAlreadyDone() {
+        let fresh = checklist(mode: .subscription)
+        #expect(fresh.canAutomate)
+        #expect(fresh.automatableSteps.map(\.kind) == [.singBox, .directories, .launchAgent, .surge,
+                                                       .service, .autoLaunch])
+
+        let halfway = checklist(existing: [paths.singBoxBinary.path, paths.singBoxConfigDirectory.path],
+                                mode: .subscription)
+        #expect(!halfway.automatableSteps.contains { $0.kind == .singBox || $0.kind == .directories })
+    }
+
+    /// 全绿之后按钮该灰掉，而不是让人点了什么都不发生。
+    @Test func nothingLeftToAutomateWhenEverythingIsDone() {
+        let done = checklist(existing: [paths.singBoxBinary.path,
+                                        paths.singBoxConfigDirectory.path,
+                                        paths.launchAgent.path],
+                             subscriptions: 1, mode: .subscription,
+                             serving: true, running: true, login: true)
+
+        #expect(!done.canAutomate)
+        #expect(done.automatableSteps.isEmpty)
+    }
+
     /// 未完成的步骤给的是「怎么做」，完成的给的是「已就位」——同一个字段两种用途，
     /// 视图不必自己判断该显示哪一句。
     @Test func detailSwitchesBetweenTodoAndDone() {

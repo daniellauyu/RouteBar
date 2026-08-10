@@ -12,7 +12,8 @@ RouteBar 是一个 macOS SwiftUI 应用：拉取机场订阅、解析并去重 V
 需要先有这两样：
 
 - **macOS 14 (Sonoma) 或更新**
-- **sing-box**：`brew install sing-box`。RouteBar 不自带它，只调用它
+- **sing-box**：RouteBar 不自带它，只调用它。可以自己 `brew install sing-box`，
+  也可以打开应用后点「一键完成」让它替你装（有 Homebrew 就用 Homebrew，没有就取官方发布件）
 
 > 最低版本卡在 14 的原因是 `ContentUnavailableView` 与双参数的 `onChange`，两者都是
 > macOS 14 才有的 SwiftUI API。开发是在更新的系统上做的，14 只做过编译验证。
@@ -44,18 +45,36 @@ xattr -dr com.apple.quarantine /Applications/RouteBar.app
 
 ## 首次配置
 
-打开 RouteBar，**概览页顶部会出现一张「开始使用」清单**，按顺序做完即可，能代劳的都有按钮。
-必需项全部完成后这张清单会自动消失。
+打开 RouteBar，**概览页顶部会出现一张「开始使用」清单**，按顺序做完即可。
+必需项全部完成后这张清单会自动消失（侧栏的「开始使用」页一直在）。
 
-| 步骤 | 做什么 | RouteBar 能不能代劳 |
+清单右上角有一颗 **「一键完成」**：它按顺序把下表里标 ✓ 的步骤全做掉，中途不打断，
+跑完给一份结论——哪些做好了、哪些只能你自己来、哪一步失败了为什么。逐步的按钮也都还在，
+想一步步来就别按它。
+
+| 步骤 | 做什么 | 一键会不会做 |
 |---|---|---|
-| 1. 安装 sing-box | `brew install sing-box`，装完点「重新检测」 | ✗ 只能你自己装 |
-| 2. 创建配置目录 | 点「创建目录」 | ✓ |
-| 3. 安装 LaunchAgent | 点「去安装」，在「环境」页一键生成并加载 | ✓ |
-| 4. 添加订阅 | 粘贴机场订阅地址（只存钥匙串） | — |
-| 5. 接上代理客户端 | 见下一节 | 部分 |
-| 6. 启动 sing-box | 点「启动服务」 | ✓ |
-| 7.（建议）开机自启 | 点「打开」 | ✓ |
+| 1. 安装 sing-box | 有 Homebrew 就 `brew install sing-box`，没有就下载官方发布件 | ✓ |
+| 2. 创建配置目录 | 建 sing-box 配置目录与 `~/Library/LaunchAgents` | ✓ |
+| 3. 安装 LaunchAgent | 生成 plist 并交给 launchd | ✓ |
+| 4. 添加订阅 | 粘贴机场订阅地址（只存钥匙串） | ✗ 地址只有你有 |
+| 5. 接上代理客户端 | 见下一节 | 订阅地址方式 ✓ / 写 Surge 配置 ✗ |
+| 6. 启动 sing-box | 生成配置并拉起服务 | ✓ 有启用节点时 |
+| 7.（建议）开机自启 | 注册登录项 | ✓ |
+
+**一键做不了的两件事**，原因都不是「还没做」而是原则上做不了：订阅地址带着你的机场凭据，
+RouteBar 无处可猜；Surge 的配置只认 Surge 自己新建的文件，替你造一份反而要你先删掉。
+
+第 1 步优先走 Homebrew（装出来的东西归包管理器管，之后 `brew upgrade` 能一起升级）；
+机器上没有 brew、或者 brew 这趟跑失败了，就从 GitHub Release 取对应架构的二进制放进
+`~/Library/Application Support/RouteBar/bin/`，不需要管理员密码。**不会**替你装 Homebrew 本身——
+它的安装脚本要 sudo，那是你该自己决定的事。
+
+**两条都不通时**（没有 brew，网络也到不了 GitHub——装这个应用的人经常正处在这种局面），
+失败信息里会给出从另一台已装好的 Mac 拷一份过来的完整步骤，见
+[使用与排查](docs/routebar-usage.md#装不上-sing-box没有-homebrew也到不了-github)。
+不加国内镜像自动下载是有意的：sing-box 不提供官方 checksum、二进制只有 ad-hoc 签名，
+从第三方加速站拿到的东西无法验真，而这是要看你全部流量的代理内核。
 
 只解析 **VLESS Reality** 节点，订阅里的 ss / trojan / vmess 会被静默跳过，所以导入的节点
 可能比机场给的少。节点页每行都标了上游协议。

@@ -104,6 +104,9 @@ final class AppModel: ObservableObject {
 
     private func presentErrors(_ errors: [String]) {
         guard !errors.isEmpty else { return }
+        // 一键流程自己会把每一步的成败写进清单和运行日志，最后还给一份总结。
+        // 这时再逐步弹窗，等于让用户在七个模态框之间点确定才能看到结果。
+        guard !setupRun.isRunning else { return }
         alertMessage = errors.joined(separator: "\n\n")
     }
 
@@ -493,6 +496,222 @@ final class AppModel: ObservableObject {
         updated.singBoxBinaryPath = probed
         log.notice("环境", "已探测到 sing-box：\(probed)")
         saveSettings(updated)
+    }
+
+    // MARK: - 一键完成
+
+    @Published private(set) var setupRun = SetupAutomationRun()
+
+    func runSetupAutomation() { Task { await runSetupAutomationAsync() } }
+
+    /// 按引导顺序把能代劳的步骤挨个做掉。
+    ///
+    /// 每一步都重新读一次 `setupChecklist`，而不是拿开跑那一刻的快照挨个跑：前一步会
+    /// 改变后一步的判定（装完二进制环境自检才变绿、生成完配置服务才有东西可启动），
+    /// 用旧快照的话，从第二步起判断的全是过期状态。
+    ///
+    /// 中途不弹窗、不中止：某一步失败不代表后面几步做不了（比如 sing-box 没装成，
+    /// 目录和 LaunchAgent 照样该建好），全部跑完再一次性给结论。
+    func runSetupAutomationAsync() async {
+        guard !setupRun.isRunning else { return }
+        setupRun = SetupAutomationRun(isRunning: true)
+        log.notice("引导", "开始一键配置")
+
+        for kind in setupChecklist.steps.map(\.kind) {
+            guard let step = setupChecklist.steps.first(where: { $0.kind == kind }) else { continue }
+            if let reason = step.manualReason {
+                record(kind, .skipped(reason))
+                continue
+            }
+            // LaunchAgent 是唯一「文件在也不等于做完了」的一步：装完 sing-box 之后
+            // plist 里的二进制路径可能已经过时，所以让它自己再判一次内容。
+            if step.isDone, kind != .launchAgent {
+                record(kind, .done(step.done))
+                continue
+            }
+            record(kind, .running)
+            record(kind, await perform(kind))
+        }
+
+        setupRun.isRunning = false
+        let report = makeSetupReport()
+        setupRun.report = report
+        log.notice("引导", "一键配置结束：\(report.headline)")
+    }
+
+    /// 只补 sing-box 这一件事。
+    ///
+    /// 清单里那一步自己的按钮用它：想补一个二进制的人不该顺带被改掉 LaunchAgent 和
+    /// 开机自启——那是他按「一键完成」时才表达的意图。
+    func installSingBoxOnly() { Task { await runSingleSetupStep(.singBox) } }
+
+    private func runSingleSetupStep(_ kind: SetupStep.Kind) async {
+        guard !setupRun.isRunning else { return }
+        // 单步不出总结条：用户只想补这一件事，回他一句「还差 3 步」是答非所问。
+        setupRun = SetupAutomationRun(isRunning: true)
+        record(kind, .running)
+        record(kind, await perform(kind))
+        setupRun.isRunning = false
+    }
+
+    private func record(_ kind: SetupStep.Kind, _ outcome: SetupStepOutcome) {
+        setupRun.outcomes[kind] = outcome
+        let title = stepTitle(kind)
+        switch outcome {
+        case .running: break
+        case .done(let text): log.notice("引导", "\(title)：\(text)")
+        case .skipped(let text): log.info("引导", "\(title)（跳过）：\(text)")
+        case .failed(let text): log.error("引导", "\(title)：\(Self.firstParagraph(text))")
+        }
+    }
+
+    /// 只取第一段。
+    ///
+    /// 失败信息后面可能跟着一整段手工补救步骤（sing-box 装不上时就是这样）。那段东西
+    /// 在清单的步骤行里给一次就够了，日志行和结论条再各印一遍，真正的错因会被淹掉。
+    private nonisolated static func firstParagraph(_ text: String) -> String {
+        text.components(separatedBy: "\n\n").first ?? text
+    }
+
+    private func stepTitle(_ kind: SetupStep.Kind) -> String {
+        setupChecklist.steps.first { $0.kind == kind }?.title ?? kind.rawValue
+    }
+
+    private func perform(_ kind: SetupStep.Kind) async -> SetupStepOutcome {
+        switch kind {
+        case .singBox: await installSingBox()
+        case .directories: await createDirectoriesForAutomation()
+        case .launchAgent: await installLaunchAgentForAutomation()
+        // 订阅地址只能用户给，上面的 `manualReason` 已经拦下，这里只是把分支补全。
+        case .subscription: .skipped("需要你自己完成。")
+        // 同理：写 Surge 配置那种模式也已被拦下，能走到这里的只有「输出订阅地址」，
+        // 而那条路要做的就是把本地服务拉起来。
+        case .surge: await startLocalSubscriptionService()
+        case .service: await startSingBoxForAutomation()
+        case .autoLaunch: enableLaunchAtLoginForAutomation()
+        }
+    }
+
+    private func installSingBox() async -> SetupStepOutcome {
+        // 进度直接写进运行日志：brew 冷启动能跑好几分钟，界面上只有一个转圈的话，
+        // 用户无从判断是在下载还是已经卡死。
+        let installer = SingBoxInstaller { message in
+            Task { @MainActor in RuntimeLog.shared.info("引导", message) }
+        }
+        do {
+            let installed = try await installer.install()
+            var updated = settings
+            updated.singBoxBinaryPath = installed.binaryPath
+            if updated == settings {
+                // 装到的正是设置里已有的那条路径，不必重存；但自检结果得重算一次，
+                // 否则界面还停在「未找到」，看着像没生效。
+                await refreshServiceAsync()
+            } else {
+                await saveSettingsAsync(updated)
+            }
+            return .done("经 \(installed.method.label) 安装 \(installed.version)：\(installed.binaryPath)")
+        } catch {
+            // 走到这里意味着 brew 和 GitHub 两条路都没成。光报错等于把人扔在死路上——
+            // 而「没有 brew 又到不了 GitHub」恰恰是这个应用最典型的处境，所以把手工
+            // 出路一并给出来，让他能照着敲完。
+            return .failed("\(error.localizedDescription)\n\n\(SetupChecklist.manualInstallGuide)")
+        }
+    }
+
+    private func createDirectoriesForAutomation() async -> SetupStepOutcome {
+        let errors = apply(await coordinator.createRequiredDirectories())
+        guard errors.isEmpty else { return .failed(errors.joined(separator: "；")) }
+        return .done("已创建 \(runtimePaths.singBoxConfigDirectory.path)")
+    }
+
+    private func installLaunchAgentForAutomation() async -> SetupStepOutcome {
+        switch await coordinator.launchAgentState() {
+        case .managedUpToDate:
+            return .done("plist 已是最新（\(settings.launchAgentLabel)）")
+        case .foreign:
+            // 用户手写的 plist 里可能有 RouteBar 不认识的字段（代理环境变量、Nice 值、
+            // 资源限制），静默覆盖等于悄悄改掉他的服务配置——这一步只能他自己点头。
+            return .skipped("\(runtimePaths.launchAgent.path) 不是 RouteBar 创建的。"
+                + "去「环境」页看过完整内容再决定要不要覆盖。")
+        case .missing, .managedOutdated:
+            let errors = apply(await coordinator.installLaunchAgent(allowOverwritingForeignFile: false))
+            await refreshLogs()
+            guard errors.isEmpty else { return .failed(errors.joined(separator: "；")) }
+            return .done("已生成 plist 并交给 launchd（\(settings.launchAgentLabel)）")
+        }
+    }
+
+    private func startLocalSubscriptionService() async -> SetupStepOutcome {
+        await syncServer()
+        guard subscriptionServing else {
+            return .failed(subscriptionError
+                ?? "本地订阅端口没能监听，通常是被别的程序占用了，见「服务」页。")
+        }
+        return .done("已在监听，订阅地址：\(subscriptionURL)")
+    }
+
+    private func startSingBoxForAutomation() async -> SetupStepOutcome {
+        // 没有启用节点时配置里一个出口都没有，这时把服务拉起来只会得到一个反复退出的
+        // launchd 任务，报出来的错跟真正的故障长得一样。等节点到位后，添加订阅那条
+        // 路径自己会生成配置并重启服务，不必在这里硬启。
+        guard enabledNodeCount > 0 else {
+            return .skipped(subscriptions.isEmpty
+                ? "还没有订阅，配置里没有任何出口。添加订阅后 RouteBar 会自动生成配置并启动。"
+                : "当前没有启用的节点，生成出来的配置会是空的。先去「节点」页启用几个。")
+        }
+        apply(await coordinator.regenerate(forceRestart: true))
+        await refreshLogs()
+        guard serviceState.isRunning else {
+            return .failed(serviceState.failureReason ?? "sing-box 没能起来，见「服务」页的错误日志。")
+        }
+        return .done("sing-box 正在运行，\(enabledNodeCount) 个节点已有本机端口")
+    }
+
+    private func enableLaunchAtLoginForAutomation() -> SetupStepOutcome {
+        setLaunchAtLogin(true)
+        switch loginItemState {
+        case .enabled:
+            return .done("已设为登录时启动")
+        case .requiresApproval:
+            // 注册确实生效了，只是系统要用户批准一次，这不是失败。
+            return .skipped("已注册，但需要你在「系统设置 → 通用 → 登录项」里批准一次。")
+        case .disabled:
+            return .failed("注册之后系统仍报告未启用。从 Xcode 直接跑时会这样，装进「应用程序」再试。")
+        case .failed(let reason):
+            return .failed(reason)
+        }
+    }
+
+    /// 收尾结论。
+    ///
+    /// 「失败」和「还得你自己做」必须分开报：前者要用户去查日志，后者只要他动一下手。
+    /// 混成一句「还有 3 步未完成」，两种情况的下一步动作完全不同却看不出来。
+    private func makeSetupReport() -> SetupAutomationRun.Report {
+        let checklist = setupChecklist
+        var failed: [String] = []
+        var pending: [String] = []
+        // 按清单顺序收集而不是遍历字典：字典无序，同一次运行两次渲染出的顺序会不一样。
+        for step in checklist.steps {
+            switch setupRun.outcomes[step.kind] {
+            case .failed(let text): failed.append("\(step.title)：\(Self.firstParagraph(text))")
+            case .skipped(let text) where !step.isDone: pending.append("\(step.title)：\(text)")
+            default: break
+            }
+        }
+
+        if !failed.isEmpty {
+            return .init(verdict: .failed,
+                         headline: "有 \(failed.count) 步没能做完，其余都已就位。",
+                         remaining: failed + pending)
+        }
+        if !checklist.isComplete {
+            return .init(verdict: .needsYou,
+                         headline: "RouteBar 这边已经就位，还差 \(checklist.remainingRequiredCount) 步只能你自己做。",
+                         remaining: pending)
+        }
+        return .init(verdict: .ready,
+                     headline: pending.isEmpty ? "全部配好了，可以用了。" : "必需项全部完成，还有几条建议项。",
+                     remaining: pending)
     }
 
     func updateWindowDimensions(_ dimensions: WindowDimensions) {

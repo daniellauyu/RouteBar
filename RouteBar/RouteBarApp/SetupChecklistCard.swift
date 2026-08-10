@@ -25,6 +25,11 @@ struct SetupChecklistCard: View {
             if context == .overview {
                 header(checklist)
             }
+            // 结论摆在步骤上方而不是页尾：跑完之后清单里有绿有橙，用户第一眼要的是
+            // 「所以现在能用了吗」，让他先从下往上找结论等于把最重要的一句藏起来。
+            if let report = model.setupRun.report, !model.setupRun.isRunning {
+                SetupRunReportBanner(report: report)
+            }
             InfoCard {
                 ForEach(Array(checklist.steps.enumerated()), id: \.element.id) { offset, step in
                     if offset > 0 { Divider() }
@@ -40,7 +45,7 @@ struct SetupChecklistCard: View {
     }
 
     private func header(_ checklist: SetupChecklist) -> some View {
-        HStack {
+        HStack(spacing: 10) {
             Text("开始使用").font(.headline)
             Spacer()
             Text(checklist.remainingRequiredCount == 0
@@ -48,6 +53,7 @@ struct SetupChecklistCard: View {
                  : "还有 \(checklist.remainingRequiredCount) 步")
                 .font(.caption)
                 .foregroundStyle(checklist.remainingRequiredCount == 0 ? .green : .orange)
+            SetupAutomationButton()
         }
     }
 
@@ -65,6 +71,9 @@ struct SetupChecklistCard: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let outcome = model.setupRun.outcome(for: step.kind), !isStale(outcome, step) {
+                    runOutcome(outcome)
+                }
                 if let handout = step.handout {
                     self.handout(handout)
                 }
@@ -73,6 +82,31 @@ struct SetupChecklistCard: View {
             actions(step)
         }
         .padding(.vertical, 9)
+    }
+
+    /// 一键跑完之后，用户自己把这一步做掉了（典型情况：回去粘了订阅地址）。
+    ///
+    /// 那句「轮到你了」这时已经过期，还挂着的话，一行绿勾下面配一句橙色的「需要你来做」，
+    /// 看着像是没做成。成功与失败的记录不算过期——它们说的是「刚才发生了什么」，仍然成立。
+    private func isStale(_ outcome: SetupStepOutcome, _ step: SetupStep) -> Bool {
+        if case .skipped = outcome { return step.isDone }
+        return false
+    }
+
+    /// 一键流程给这一步留下的话。
+    ///
+    /// 单独一行、带颜色，不并进上面那段说明：说明讲的是「这一步是什么」，
+    /// 这里讲的是「刚才那次跑到这儿发生了什么」，混成一段之后失败原因会被淹掉。
+    private func runOutcome(_ outcome: SetupStepOutcome) -> some View {
+        HStack(alignment: .top, spacing: 5) {
+            Image(systemName: outcome.symbol).font(.caption2)
+            Text(outcome.detail)
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        .foregroundStyle(outcome.tint)
+        .padding(.top, 2)
     }
 
     /// 这一步要用户拿走的那串文本：命令或地址。
@@ -98,9 +132,16 @@ struct SetupChecklistCard: View {
 
     private func marker(_ step: SetupStep, number: Int) -> some View {
         Group {
+            // 已完成永远优先显示绿勾：这一步的事实是「它成了」，
+            // 而不是「刚才那次运行对它做了什么」。
             if step.isDone {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
+            } else if case .running = model.setupRun.outcome(for: step.kind) {
+                ProgressView().controlSize(.small)
+            } else if let outcome = model.setupRun.outcome(for: step.kind) {
+                Image(systemName: outcome.symbol)
+                    .foregroundStyle(outcome.tint)
             } else {
                 Text("\(number)")
                     .font(.caption.monospacedDigit().weight(.semibold))
@@ -114,13 +155,18 @@ struct SetupChecklistCard: View {
 
     @ViewBuilder
     private func actions(_ step: SetupStep) -> some View {
-        if step.isDone {
+        // 跑的过程中把逐步按钮收起来：这时点「创建目录」会和流水线同时动同一批文件，
+        // 而且用户本来就是为了不用逐个点才按的一键。
+        if step.isDone || model.setupRun.isRunning {
             EmptyView()
         } else {
             HStack(spacing: 6) {
                 switch step.kind {
                 case .singBox:
+                    // 「重新检测」留着：自己刚在终端里装完的人只需要 RouteBar 再看一眼，
+                    // 不该被逼着走一次自动安装。
                     Button("重新检测") { model.redetectSingBox() }
+                    Button("立即安装") { model.installSingBoxOnly() }
                         .buttonStyle(.borderedProminent)
                 case .directories:
                     Button("创建目录") { model.createRequiredDirectories() }
@@ -148,6 +194,79 @@ struct SetupChecklistCard: View {
                 }
             }
             .controlSize(.small)
+        }
+    }
+}
+
+/// 「一键完成」按钮。
+///
+/// 概览页卡片的标题行和「开始使用」页的顶栏共用这一个：两处各画一个的话，
+/// 「什么时候该禁用」这条规则迟早会在一边被改漏。
+struct SetupAutomationButton: View {
+    @EnvironmentObject private var model: AppModel
+
+    var controlSize: ControlSize = .small
+
+    var body: some View {
+        Button {
+            model.runSetupAutomation()
+        } label: {
+            if model.setupRun.isRunning {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("正在配置…")
+                }
+            } else {
+                Label("一键完成", systemImage: "wand.and.stars")
+            }
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(controlSize)
+        .disabled(model.setupRun.isRunning || !model.setupChecklist.canAutomate)
+        .help("按顺序做掉 RouteBar 能代劳的步骤：安装 sing-box、创建目录、安装 LaunchAgent、"
+            + "启动服务、开机自启。订阅地址和 Surge 配置只能你自己来。")
+    }
+}
+
+/// 一键跑完之后的结论条。
+///
+/// 三种结论对应三种完全不同的下一步动作：能用了、该你动手了、出错了要去查日志。
+/// 合成一句「还有 N 步未完成」的话，这三种情况在界面上长得一模一样。
+struct SetupRunReportBanner: View {
+    let report: SetupAutomationRun.Report
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Label(report.headline, systemImage: symbol)
+                .font(.callout.weight(.medium))
+                .foregroundStyle(tint)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(report.remaining, id: \.self) { line in
+                Text("· \(line)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(tint.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var symbol: String {
+        switch report.verdict {
+        case .ready: "checkmark.seal.fill"
+        case .needsYou: "hand.raised.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var tint: Color {
+        switch report.verdict {
+        case .ready: .green
+        case .needsYou: .orange
+        case .failed: .red
         }
     }
 }

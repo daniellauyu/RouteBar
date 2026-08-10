@@ -12,6 +12,7 @@ RouteBar 只往四个地方写东西，全部在你的用户目录下，没有�
 | `~/Library/Application Support/RouteBar/state.json` | 订阅元数据与节点（**不含订阅地址**） | RouteBar |
 | `~/Library/Application Support/RouteBar/settings.json` | 路径、输出方式、订阅端口与令牌、节点命名模板 | RouteBar |
 | `~/Library/Application Support/RouteBar/sing-box.json`<br>`~/…/surge-proxies.conf` | 最近一次生成结果的副本，用来对照「装进去的到底是什么」 | RouteBar |
+| `~/Library/Application Support/RouteBar/bin/sing-box` | 只在**没有 Homebrew**、由「一键完成」下载安装时才有。有 brew 的机器上这个目录不存在 | RouteBar 下载 |
 | `~/.config/sing-box/surge-vless.json` | 真正在跑的 sing-box 配置 | RouteBar 生成，sing-box 读取 |
 | `~/.config/sing-box/surge-vless{,-error}.log` | sing-box 自己的输出 | sing-box |
 | `~/Library/LaunchAgents/<Label>.plist` | 让 launchd 拉起 sing-box | RouteBar 生成，launchd 读取 |
@@ -41,6 +42,36 @@ RouteBar 只往四个地方写东西，全部在你的用户目录下，没有�
 ## 排查
 
 先看概览页的**自检**区：能自动判断出来的问题都列在那里。下面按症状给出更细的路径。
+
+### 装不上 sing-box：没有 Homebrew，也到不了 GitHub
+
+这不是边缘情况，而是这个应用最典型的处境——装它就是因为直连不通，而配好之前一个可用
+出口都没有。「一键完成」的两条自动路径（brew、GitHub Release）此时都会失败，失败信息里
+会给出下面这套步骤，**从另一台已经装好的 Mac 上拷一份过来**：
+
+```sh
+# 在已经装好的那台机器上，找到它
+which sing-box                       # 通常是 /opt/homebrew/bin/sing-box
+
+# 用 AirDrop / U 盘 / scp 传到这台机器之后，在这台机器上：
+mkdir -p ~/Library/Application\ Support/RouteBar/bin
+mv ~/Downloads/sing-box ~/Library/Application\ Support/RouteBar/bin/
+chmod +x ~/Library/Application\ Support/RouteBar/bin/sing-box
+xattr -dr com.apple.quarantine ~/Library/Application\ Support/RouteBar/bin/sing-box
+```
+
+然后回到「环境」页，把「sing-box 可执行文件」改成这个路径并保存。
+
+**这一步不能用「重新检测」代替**：那颗按钮只认 Homebrew 与系统的几个固定前缀
+（`/opt/homebrew/bin`、`/usr/local/bin`、`/usr/bin`），找不到上面这个位置的文件。
+
+两台机器的芯片要一致：Apple 芯片上拷来的二进制在 Intel Mac 上跑不了，反之亦然。
+放进 `Application Support/RouteBar/bin/` 的好处是卸载 RouteBar 时会跟着一起删掉；
+放别处也行，路径填对即可。
+
+> 为什么不加个国内镜像自动下载：sing-box 的 Release 不提供官方 checksum，二进制本身
+> 只有 ad-hoc 签名（没有 Developer ID 可以钉），所以从第三方加速站拿到的东西**没有办法
+> 验真**。而这是要看你全部流量的代理内核，被掉包的后果比装不上严重得多。
 
 ### 代理连不上，但 RouteBar 显示一切正常
 
@@ -159,7 +190,7 @@ LABEL="com.liuyude.RouteBar.sing-box"
 launchctl bootout "gui/$(id -u)/$LABEL"
 rm -f ~/Library/LaunchAgents/"$LABEL".plist
 
-# 2. 删掉应用数据（订阅元数据、节点、设置、生成副本）
+# 2. 删掉应用数据（订阅元数据、节点、设置、生成副本，以及一键下载的那份 sing-box）
 rm -rf ~/Library/Application\ Support/RouteBar
 
 # 3. 删掉钥匙串里的订阅地址（每条订阅一条，重复执行到报「找不到」为止）
@@ -170,6 +201,8 @@ rm -rf /Applications/RouteBar.app
 ```
 
 `~/.config/sing-box/` 下的配置与日志是给 sing-box 用的，按需自行删除；
-sing-box 本体用 `brew uninstall sing-box` 卸载。Surge 那边：用订阅地址方式的话，
+sing-box 本体用 `brew uninstall sing-box` 卸载——如果它是「一键完成」在没有 brew 的机器上
+下载的，第 2 步已经连它一起删掉了（「环境」页的 sing-box 路径指到
+`Application Support/RouteBar/bin/` 就是这种情况）。Surge 那边：用订阅地址方式的话，
 把策略组里那行 `policy-path=` 删掉即可；用写入配置方式的话，`[Proxy]` 段里的
 RouteBar 代理需要手工清理，同目录下的 `.routebar-backup` 是覆盖前的原始版本。

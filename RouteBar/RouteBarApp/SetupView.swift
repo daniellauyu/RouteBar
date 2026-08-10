@@ -18,6 +18,8 @@ struct SetupView: View {
                     model.redetectSingBox()
                     model.refreshLaunchAtLogin()
                 }
+                .disabled(model.setupRun.isRunning)
+                SetupAutomationButton(controlSize: .regular)
             }
             Divider()
 
@@ -40,9 +42,15 @@ struct SetupView: View {
 
     private var subtitle: String {
         let checklist = model.setupChecklist
+        if model.setupRun.isRunning {
+            return "正在按顺序处理，可以在「运行日志」里看实时输出。"
+        }
         if !checklist.isComplete {
             let next = checklist.nextStep.map { "下一步是「\($0.title)」。" } ?? ""
-            return "还有 \(checklist.remainingRequiredCount) 步。\(next)"
+            let hint = checklist.canAutomate
+                ? "其中 \(checklist.automatableSteps.count) 步可以交给「一键完成」。"
+                : ""
+            return "还有 \(checklist.remainingRequiredCount) 步。\(next)\(hint)"
         }
         return checklist.steps.allSatisfy(\.isDone)
             ? "全部步骤都已完成。路径失效时（Homebrew 升级、Surge 换配置名）这里会重新亮起来。"
