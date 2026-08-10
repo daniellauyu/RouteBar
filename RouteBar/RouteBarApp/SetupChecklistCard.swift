@@ -205,12 +205,7 @@ struct SetupChecklistCard: View {
                     Button("去添加") { model.selectedSection = .subscriptions }
                         .buttonStyle(.borderedProminent)
                 case .output:
-                    if model.settings.outputMode.servesSubscription {
-                        Button("查看服务") { model.selectedSection = .service }
-                    } else {
-                        Button("去设置路径") { model.selectedSection = .environment }
-                            .buttonStyle(.borderedProminent)
-                    }
+                    Button("查看服务") { model.selectedSection = .service }
                 case .service:
                     Button("启动服务") { model.restartService() }
                         .buttonStyle(.borderedProminent)

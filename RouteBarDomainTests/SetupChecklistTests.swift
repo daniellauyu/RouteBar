@@ -14,13 +14,11 @@ import Testing
 
     private func checklist(existing: Set<String> = [],
                            subscriptions: Int = 0,
-                           mode: OutputMode = .subscription,
                            serving: Bool = false,
                            running: Bool = false,
                            login: Bool = false) -> SetupChecklist {
         SetupChecklist(environment: report(existing: existing),
                        subscriptionCount: subscriptions,
-                       outputMode: mode,
                        subscriptionServing: serving,
                        subscriptionURL: Self.subscriptionURL,
                        serviceRunning: running,
@@ -52,31 +50,12 @@ import Testing
         #expect(agent.nextStep?.kind == .subscription)
     }
 
-    /// 两种输出方式的「Surge 那一步算不算做完」标准完全不同：
-    /// 配置模式看托管配置在不在，订阅模式看本地服务有没有监听。
-    @Test func surgeStepDependsOnTheOutputMode() {
-        let everythingButSurge: Set<String> = [paths.singBoxBinary.path,
-                                               paths.singBoxConfigDirectory.path,
-                                               paths.launchAgent.path]
-
-        let profile = checklist(existing: everythingButSurge, subscriptions: 1, mode: .profile, serving: true)
-        #expect(profile.nextStep?.kind == .output)          // 服务在监听也没用，配置模式看的是文件
-
-        let withProfile = checklist(existing: everythingButSurge.union([paths.surgeProfile.path]),
-                                    subscriptions: 1, mode: .profile)
-        #expect(withProfile.nextStep?.kind == .service)
-
-        let subscription = checklist(existing: everythingButSurge.union([paths.surgeProfile.path]),
-                                     subscriptions: 1, mode: .subscription, serving: false)
-        #expect(subscription.nextStep?.kind == .output)     // 配置文件在也没用，订阅模式看的是端口
-    }
-
     /// 开机自启是建议项：没开也算配置完成，但仍要出现在清单里。
     @Test func optionalStepDoesNotBlockCompletion() {
         let list = checklist(existing: [paths.singBoxBinary.path,
                                         paths.singBoxConfigDirectory.path,
                                         paths.launchAgent.path],
-                             subscriptions: 1, mode: .subscription, serving: true, running: true, login: false)
+                             subscriptions: 1, serving: true, running: true, login: false)
 
         #expect(list.isComplete)
         #expect(list.remainingRequiredCount == 0)
@@ -89,35 +68,11 @@ import Testing
         let list = checklist(existing: [paths.singBoxBinary.path,
                                         paths.singBoxConfigDirectory.path,
                                         paths.launchAgent.path],
-                             subscriptions: 2, mode: .subscription, serving: true, running: true, login: true)
+                             subscriptions: 2, serving: true, running: true, login: true)
 
         #expect(list.isComplete)
         #expect(list.nextStep == nil)
         #expect(list.steps.allSatisfy { $0.isDone })
-    }
-
-    /// Surge 的那两项只在真的要写 Surge 配置时才算数。
-    ///
-    /// RouteBar 产出的是一组本机 SOCKS5/HTTP 端口，Surge 只是消费方式之一；
-    /// 用别的客户端的人没有那个配置文件，无条件算成缺失等于给他们一条永远修不好的警告。
-    @Test func surgePathsOnlyCountWhenTheProfileIsActuallyWritten() {
-        let onlySingBox: Set<String> = [paths.singBoxBinary.path,
-                                        paths.singBoxConfigDirectory.path,
-                                        paths.launchAgent.path]
-
-        let writesProfile = RouteBarEnvironmentReport(paths: paths, expectsSurgeProfile: true) {
-            onlySingBox.contains($0.path)
-        }
-        #expect(writesProfile.missingCount == 2)     // Surge Profiles 目录 + 托管配置
-        #expect(writesProfile.needsSetup)
-
-        let subscriptionOnly = RouteBarEnvironmentReport(paths: paths, expectsSurgeProfile: false) {
-            onlySingBox.contains($0.path)
-        }
-        #expect(subscriptionOnly.missingCount == 0)
-        #expect(!subscriptionOnly.needsSetup)
-        // 事实本身不变，只是不再计入「还差几项」。
-        #expect(subscriptionOnly.surgeProfile == .missing)
     }
 
     /// 每一步要交给用户的那串文本由清单本身给出，视图不必自己去别处凑。
@@ -132,16 +87,13 @@ import Testing
         let installed = checklist(existing: [paths.singBoxBinary.path])
         #expect(installed.steps.first { $0.kind == .singBox }?.handout == nil)
 
-        let serving = checklist(mode: .subscription, serving: true)
+        let serving = checklist(serving: true)
         #expect(serving.steps.first { $0.kind == .output }?.handout == Self.subscriptionURL)
 
         // 服务没起来时地址是死的，给了只会让人白贴一次。
-        let notServing = checklist(mode: .subscription, serving: false)
+        let notServing = checklist(serving: false)
         #expect(notServing.steps.first { $0.kind == .output }?.handout == nil)
 
-        // 写配置文件的模式不经过本地服务，没有地址可交。
-        let profile = checklist(mode: .profile, serving: true)
-        #expect(profile.steps.first { $0.kind == .output }?.handout == nil)
     }
 
     /// 「一键完成」的边界：订阅地址和 Surge 配置之外的每一步 RouteBar 都能自己做完。
@@ -149,28 +101,24 @@ import Testing
     /// 这两项不是「暂时没做」而是原则上做不了——机场凭据只有用户有，Surge 只认自己
     /// 新建的配置文件。判定必须留在清单里，否则加了新步骤时执行器那边会漏掉一处。
     @Test func onlyTheUserSuppliedStepsStayManual() {
-        let manualKinds = Set(checklist(mode: .profile).manualSteps.map(\.kind))
-        #expect(manualKinds == [.subscription, .output])
+        let list = checklist()
+        // 只剩订阅地址一项要用户自己给——其余每一步 RouteBar 都能做完。
+        #expect(list.manualSteps.map(\.kind) == [.subscription])
+        #expect(list.steps.first { $0.kind == .output }?.automation == .automatic)
 
-        // 输出订阅地址时，Surge 那一步做的是把 RouteBar 自己的本地服务拉起来，能自动。
-        let subscriptionMode = checklist(mode: .subscription)
-        #expect(subscriptionMode.manualSteps.map(\.kind) == [.subscription])
-        #expect(subscriptionMode.steps.first { $0.kind == .output }?.automation == .automatic)
-
-        // 每条手动项都得说清为什么，光标一个「不能自动」等于把问题原样退回去。
-        #expect(subscriptionMode.manualSteps.allSatisfy { $0.manualReason?.isEmpty == false })
+        // 手动项得说清为什么，光标一个「不能自动」等于把问题原样退回去。
+        #expect(list.manualSteps.allSatisfy { $0.manualReason?.isEmpty == false })
     }
 
     /// 一键只跑「还没做完」的自动步骤：已经绿了的重跑一遍，轻则白等，
     /// 重则把已经在跑的服务无谓地重启一次。
     @Test func automationSkipsWhatIsAlreadyDone() {
-        let fresh = checklist(mode: .subscription)
+        let fresh = checklist()
         #expect(fresh.canAutomate)
         #expect(fresh.automatableSteps.map(\.kind) == [.singBox, .directories, .launchAgent, .output,
                                                        .service, .autoLaunch])
 
-        let halfway = checklist(existing: [paths.singBoxBinary.path, paths.singBoxConfigDirectory.path],
-                                mode: .subscription)
+        let halfway = checklist(existing: [paths.singBoxBinary.path, paths.singBoxConfigDirectory.path])
         #expect(!halfway.automatableSteps.contains { $0.kind == .singBox || $0.kind == .directories })
     }
 
@@ -179,8 +127,7 @@ import Testing
         let done = checklist(existing: [paths.singBoxBinary.path,
                                         paths.singBoxConfigDirectory.path,
                                         paths.launchAgent.path],
-                             subscriptions: 1, mode: .subscription,
-                             serving: true, running: true, login: true)
+                             subscriptions: 1, serving: true, running: true, login: true)
 
         #expect(!done.canAutomate)
         #expect(done.automatableSteps.isEmpty)

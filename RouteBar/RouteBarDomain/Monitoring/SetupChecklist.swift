@@ -74,7 +74,6 @@ public struct SetupChecklist: Sendable, Equatable {
 
     public nonisolated init(environment: RouteBarEnvironmentReport,
                             subscriptionCount: Int,
-                            outputMode: OutputMode,
                             subscriptionServing: Bool,
                             subscriptionURL: String,
                             serviceRunning: Bool,
@@ -123,41 +122,20 @@ public struct SetupChecklist: Sendable, Equatable {
             // 唯一必须由人提供的输入。
             automation: .manual("订阅地址只有你有，从机场后台复制过来粘一次即可。")))
 
-        // 5. 最后一公里：端口已经在本机开好了，这一步只解决「让 Surge 也知道它们在哪」。
-        //    用别的客户端的人其实到上一步就能用了，所以这一步的两种文案都得说清这件事，
-        //    否则他会以为不配完这一步就用不了。两种输出方式的「做完」标准也完全不同，
-        //    不能合并成一句话。
-        switch outputMode {
-        case .profile:
-            steps.append(SetupStep(
-                kind: .output,
-                title: "准备 Surge 配置",
-                done: "已找到托管的 Surge 配置。",
-                todo: "在 Surge 里新建一份配置，只要含 [Proxy] 和 [Proxy Group] 两个段即可，"
-                    + "然后在「环境」页把路径指向它。RouteBar 只改写 [Proxy] 段和「sing-box 节点」策略组，"
-                    + "规则与其它策略组原样保留。"
-                    // 默认就是这种模式，所以每个新用户都会撞见这一步——包括根本不用 Surge 的人。
-                    // 不写这一句，他只会看到一个自己永远做不完的必需项。
-                    + "不用 Surge 的话这一步可以不管：节点页上的端口已经能用了，"
-                    + "在「设置」里把输出方式改掉，这一步就不再出现。",
-                isDone: environment.surgeProfile == .ready,
-                // 凭空造一份 Surge 配置比不造更糟：Surge 只认自己新建的文件，
-                // RouteBar 写出来的那份不会出现在它的配置列表里，用户反而要先删掉。
-                automation: .manual("Surge 的配置只能在 Surge 里新建，之后在「环境」页把路径指过去。")))
-        case .subscription, .both:
-            // 这一步的「完成」判的是本地服务在不在监听——那是 RouteBar 自己起的，用户没做任何事。
-            // 所以光说「已在监听」等于什么都没交代：他要做的是把下面这个地址复制走。
-            // 地址就是这一步的产出，跟着步骤一起给出来，不必再跳去服务页找。
-            steps.append(SetupStep(
-                kind: .output,
-                title: "把订阅地址交给客户端",
-                done: "本地订阅服务已在监听。复制下面这个地址，填进 Surge 策略组的 policy-path 即可；"
-                    + "用别的客户端则不需要它——每个启用节点都有一个本机端口，直接当 SOCKS5/HTTP 代理填。",
-                todo: "本地订阅服务还没起来，地址暂时给不出来（通常是端口被占用，见「服务」页）。"
-                    + "用别的客户端的话不必等它——每个启用节点都有一个本机端口，直接填进去就能用。",
-                isDone: subscriptionServing,
-                handout: subscriptionServing ? subscriptionURL : nil))
-        }
+        // 5. 最后一公里：端口已经在本机开好了，这一步只是把一份现成的清单摆出来。
+        //
+        //    这一步的「完成」判的是本地服务在不在监听——那是 RouteBar 自己起的，用户没做
+        //    任何事。所以光说「已在监听」等于什么都没交代：他要做的是把下面这个地址复制走。
+        //    地址就是这一步的产出，跟着步骤一起给出来，不必再跳去服务页找。
+        steps.append(SetupStep(
+            kind: .output,
+            title: "把订阅地址交给客户端",
+            done: "本地订阅服务已在监听。复制下面这个地址，填进 Surge 策略组的 policy-path 即可；"
+                + "用别的客户端则不需要它——每个启用节点都有一个本机端口，直接当 SOCKS5/HTTP 代理填。",
+            todo: "本地订阅服务还没起来，地址暂时给不出来（通常是端口被占用，见「服务」页）。"
+                + "用别的客户端的话不必等它——每个启用节点都有一个本机端口，直接填进去就能用。",
+            isDone: subscriptionServing,
+            handout: subscriptionServing ? subscriptionURL : nil))
 
         steps.append(SetupStep(
             kind: .service,
@@ -166,15 +144,14 @@ public struct SetupChecklist: Sendable, Equatable {
             todo: "前面几步就位后，启动服务即可。没有启用节点时配置为空，先添加订阅。",
             isDone: serviceRunning))
 
-        // 可选，但对订阅输出方式几乎是必需的：RouteBar 没在运行时，
-        // 本地订阅端口是关的，Surge 只能吃上一次拉到的缓存。
+        // 标着可选，实际上接近必需：订阅地址由 RouteBar 自己提供，它没运行时那个端口是
+        // 关的，客户端只能吃上一次拉到的缓存。sing-box 由 launchd 托管，不受影响。
         steps.append(SetupStep(
             kind: .autoLaunch,
             title: "开机自动启动 RouteBar",
             done: "已设为登录时启动。",
-            todo: outputMode.servesSubscription
-                ? "订阅地址由 RouteBar 提供，它没运行时 Surge 就拉不到新节点（旧的仍可用）。建议打开。"
-                : "自动更新订阅只在 RouteBar 运行时进行。建议打开。",
+            todo: "订阅地址由 RouteBar 提供，它没运行时客户端就拉不到新节点（旧的仍可用），"
+                + "自动更新订阅也只在它运行时进行。建议打开。",
             isDone: launchesAtLogin,
             isOptional: true))
 

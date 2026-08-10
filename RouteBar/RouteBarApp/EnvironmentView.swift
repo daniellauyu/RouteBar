@@ -3,7 +3,7 @@ import SwiftUI
 /// 环境页：RouteBar 依赖的外部路径的检测与配置。
 ///
 /// 原来这是个 900×620 的模态助手，只在首次启动时弹一次；但路径失效（Homebrew 升级、
-/// Surge 换配置名）是随时可能发生的事，做成常驻页面，出问题时随时能来改。
+/// Homebrew 升级换前缀）是随时可能发生的事，做成常驻页面，出问题时随时能来改。
 struct EnvironmentView: View {
     @EnvironmentObject private var model: AppModel
     @State private var draft = RouteBarSettings.defaults()
@@ -14,7 +14,7 @@ struct EnvironmentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PageBar("RouteBar 需要知道 sing-box、Surge 配置和 LaunchAgent 的实际位置。") {
+            PageBar("RouteBar 需要知道 sing-box 与 LaunchAgent 的实际位置。") {
                 Button("恢复默认路径", systemImage: "arrow.counterclockwise") {
                     draft = RouteBarSettings.defaults()
                 }
@@ -187,8 +187,7 @@ struct EnvironmentView: View {
     }
 
     private var report: RouteBarEnvironmentReport {
-        RouteBarEnvironmentReport(paths: RuntimePaths(settings: draft),
-                                  expectsSurgeProfile: draft.outputMode.writesProfile) {
+        RouteBarEnvironmentReport(paths: RuntimePaths(settings: draft)) {
             FileManager.default.fileExists(atPath: $0.path)
         }
     }
@@ -216,18 +215,6 @@ struct EnvironmentView: View {
             checkRow("sing-box 配置目录", report.singBoxConfigDirectory,
                      RuntimePaths(settings: draft).singBoxConfigDirectory.path,
                      hint: "缺失时点上方「创建缺失目录」即可")
-            // 只输出订阅地址时 RouteBar 不碰 Surge 配置，这两项与当前配置无关，列出来只会
-            // 让人以为还有东西没装好。换回「写入 Surge 配置」时它们会自己回来。
-            if draft.outputMode.writesProfile {
-                Divider()
-                checkRow("Surge Profiles 目录", report.surgeProfilesDirectory,
-                         RuntimePaths(settings: draft).surgeProfilesDirectory.path,
-                         hint: "Surge 安装后自动创建")
-                Divider()
-                checkRow("Surge 托管配置", report.surgeProfile, RuntimePaths(settings: draft).surgeProfile.path,
-                         hint: "在 Surge 里新建一份配置即可，只要含 [Proxy] 和 [Proxy Group] 两个段。"
-                             + "RouteBar 只改写 [Proxy] 段和「sing-box 节点」策略组，规则和其它策略组原样保留。")
-            }
             Divider()
             checkRow("LaunchAgent", report.launchAgent, RuntimePaths(settings: draft).launchAgent.path,
                      hint: "缺失时用上方「LaunchAgent」卡片里的按钮创建")
@@ -266,8 +253,7 @@ struct EnvironmentView: View {
                     TextField("标准日志", text: $draft.singBoxLogPath)
                     TextField("错误日志", text: $draft.singBoxErrorLogPath)
                 }
-                Section("Surge 与 LaunchAgent") {
-                    TextField("Surge 配置", text: $draft.surgeProfilePath)
+                Section("LaunchAgent") {
                     TextField("LaunchAgent plist", text: $draft.launchAgentPath)
                     TextField("LaunchAgent Label", text: $draft.launchAgentLabel)
                 }

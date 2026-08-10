@@ -25,42 +25,6 @@ struct ConfigurationGeneratorTests {
         #expect(result.surgeProxySection.contains("RouteBar 02 - Tokyo 02 = socks5, 127.0.0.1, 7702"))
     }
 
-    @Test func replacesProxySectionAndRouteBarGroupWithoutTouchingRules() throws {
-        let generated = try ConfigurationGenerator.generate(nodes: [makeNode("Hong Kong 01", "a.example.com")])
-        let profile = """
-        [General]
-        ipv6 = false
-        [Proxy]
-        old = socks5, 127.0.0.1, 9999
-        [Proxy Group]
-        Main = select, sing-box 节点, DIRECT
-        sing-box 节点 = select, old
-        [Rule]
-        FINAL,Main
-        """
-        let updated = try SurgeProfileUpdater.update(profile, with: generated)
-        #expect(updated.contains("RouteBar 01 - Hong Kong 01 = socks5, 127.0.0.1, 7701"))
-        #expect(updated.contains("sing-box 节点 = select, \"RouteBar 01 - Hong Kong 01\""))
-        #expect(updated.contains("[Rule]\nFINAL,Main"))
-        #expect(!updated.contains("old = socks5"))
-    }
-
-    @Test func updatingAnInstalledSurgeProfileIsIdempotent() throws {
-        let generated = try ConfigurationGenerator.generate(nodes: [makeNode("Hong Kong 01", "a.example.com")])
-        let original = """
-        [General]
-        ipv6 = false
-        [Proxy]
-        old = socks5, 127.0.0.1, 9999
-        [Proxy Group]
-        sing-box 节点 = select, old
-        [Rule]
-        FINAL,sing-box 节点
-        """
-        let installed = try SurgeProfileUpdater.update(original, with: generated)
-        #expect(try SurgeProfileUpdater.update(installed, with: generated) == installed)
-    }
-
     @Test func runtimePathsExposeManagedConfigLogAndLaunchAgentLocations() {
         let home = URL(fileURLWithPath: "/Users/tester", isDirectory: true)
         let settings = RouteBarSettings.defaults(
@@ -72,7 +36,6 @@ struct ConfigurationGeneratorTests {
         #expect(paths.singBoxConfig.path == "/Users/tester/.config/sing-box/surge-vless.json")
         #expect(paths.singBoxLog.path == "/Users/tester/.config/sing-box/surge-vless.log")
         #expect(paths.singBoxErrorLog.path == "/Users/tester/.config/sing-box/surge-vless-error.log")
-        #expect(paths.surgeProfile.path == "/Users/tester/Library/Application Support/Surge/Profiles/surge-singbox.conf")
         // Label 跟着 bundle id 走，plist 文件名与 launchctl 目标都由它派生。
         #expect(paths.launchAgent.path == "/Users/tester/Library/LaunchAgents/com.example.RouteBar.sing-box.plist")
         #expect(paths.launchctlTarget == "gui/501/com.example.RouteBar.sing-box")
@@ -85,7 +48,6 @@ struct ConfigurationGeneratorTests {
             singBoxConfigPath: "/tmp/custom-sing-box.json",
             singBoxLogPath: "/tmp/custom.log",
             singBoxErrorLogPath: "/tmp/custom-error.log",
-            surgeProfilePath: "/tmp/custom-surge.conf",
             launchAgentPath: "/tmp/custom.plist",
             launchAgentLabel: "dev.routebar.test"
         )
@@ -93,7 +55,6 @@ struct ConfigurationGeneratorTests {
 
         #expect(paths.singBoxBinary.path == "/usr/local/bin/sing-box")
         #expect(paths.singBoxConfig.path == "/tmp/custom-sing-box.json")
-        #expect(paths.surgeProfile.path == "/tmp/custom-surge.conf")
         #expect(paths.launchAgent.path == "/tmp/custom.plist")
         #expect(paths.launchctlTarget == "gui/501/dev.routebar.test")
     }
@@ -103,14 +64,11 @@ struct ConfigurationGeneratorTests {
         let paths = RuntimePaths(home: home, userID: 501)
         let existing: Set<String> = [
             paths.singBoxBinary.path,
-            paths.surgeProfilesDirectory.path,
         ]
 
         let report = RouteBarEnvironmentReport(paths: paths) { existing.contains($0.path) }
 
         #expect(report.singBoxBinary == .ready)
-        #expect(report.surgeProfilesDirectory == .ready)
-        #expect(report.surgeProfile == .missing)
         #expect(report.singBoxConfigDirectory == .missing)
         #expect(report.launchAgent == .missing)
         #expect(report.needsSetup)

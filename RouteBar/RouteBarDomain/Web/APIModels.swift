@@ -159,12 +159,8 @@ public struct APINode: nonisolated Codable, Sendable {
     }
 }
 
-/// 额外为 Surge 铺的接法，以及本地订阅服务当前是否可用。本机端口与这些无关。
+/// 本地订阅服务当前是否可用。本机端口与它无关，那批端口由 sing-box 直接提供。
 public struct APIOutput: nonisolated Codable, Sendable {
-    public var mode: String
-    public var modeLabel: String
-    public var servesSubscription: Bool
-    public var writesProfile: Bool
     public var subscriptionURL: String
     public var subscriptionPort: Int
     public var serving: Bool
@@ -173,10 +169,6 @@ public struct APIOutput: nonisolated Codable, Sendable {
     public var surgePolicyLine: String
 
     public nonisolated init(settings: RouteBarSettings, serving: Bool, error: String?) {
-        mode = settings.outputMode.rawValue
-        modeLabel = settings.outputMode.label
-        servesSubscription = settings.outputMode.servesSubscription
-        writesProfile = settings.outputMode.writesProfile
         subscriptionURL = settings.subscriptionURL
         subscriptionPort = settings.subscriptionPort
         self.serving = serving

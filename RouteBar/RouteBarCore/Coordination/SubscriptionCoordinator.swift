@@ -97,8 +97,7 @@ public actor SubscriptionCoordinator {
     }
 
     private func environmentReport() -> RouteBarEnvironmentReport {
-        RouteBarEnvironmentReport(paths: runtime.paths,
-                                  expectsSurgeProfile: settings.outputMode.writesProfile) {
+        RouteBarEnvironmentReport(paths: runtime.paths) {
             FileManager.default.fileExists(atPath: $0.path)
         }
     }
@@ -279,32 +278,24 @@ public actor SubscriptionCoordinator {
             let generated = try ConfigurationGenerator.generate(
                 nodes: merged, naming: NodeNaming(settings: settings, subscriptions: subscriptions))
             guard !generated.nodes.isEmpty else {
-                return [.init(.warning, "配置", "没有启用节点，已跳过生成（Surge 配置保持原样）")]
+                return [.init(.warning, "配置", "没有启用节点，已跳过生成")]
             }
             try stateStore.saveGenerated(generated)
             generatedAt = .now
-            if runtime.installedConfigurationMatches(generated, writesSurgeProfile: settings.outputMode.writesProfile),
-               !forceRestart {
+            // 只有 sing-box 那一份变了才值得重启：只改节点名时那份 JSON 一个字节都没动
+            // （名字只出现在给客户端的策略列表里），顺手重启等于白断一次全部连接。
+            let singBoxUnchanged = runtime.installedSingBoxConfigMatches(generated)
+            if singBoxUnchanged, !forceRestart {
                 // 不重装也要把服务状态对齐：跳过分支是「什么都不做」，但期间 sing-box
                 // 可能已经被外部停掉或崩了，直接 return 会让界面一直显示旧状态，
                 // 直到下次窗口激活才自我纠正。
                 serviceState = await runtime.status()
                 return [.init(.info, "配置", "配置未变化，已跳过安装与 sing-box 重启")]
             }
-            // 只有 sing-box 那一份变了才值得重启：改节点名之类的改动只落在 Surge 一侧，
-            // 顺手重启等于毫无必要地把全部连接断一次。
-            let singBoxUnchanged = runtime.installedSingBoxConfigMatches(generated)
-            let report = try await runtime.install(generated,
-                                                   writesSurgeProfile: settings.outputMode.writesProfile)
+            try await runtime.install(generated)
             var messages: [OutcomeMessage] = [
-                .init(.notice, "配置",
-                      "已生成并安装 \(generated.nodes.count) 个节点出口（\(settings.outputMode.label)）"),
+                .init(.notice, "配置", "已生成并安装 \(generated.nodes.count) 个节点出口"),
             ]
-            // Surge 那一半没写成时给的是警告而不是错误：sing-box 已经装好，端口能用了。
-            // 报成错误的话，界面会弹一个模态框说「配置生成失败」，而配置其实生成成功了。
-            if let issue = report.surgeProfileIssue {
-                messages.append(.init(.warning, "配置", issue))
-            }
             guard forceRestart || !singBoxUnchanged else {
                 serviceState = await runtime.status()
                 messages.append(.init(.info, "服务", "sing-box 配置未变，无需重启"))

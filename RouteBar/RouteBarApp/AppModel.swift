@@ -142,7 +142,6 @@ final class AppModel: ObservableObject {
         SetupChecklist(
             environment: environment ?? RouteBarEnvironmentReport(paths: runtimePaths) { _ in false },
             subscriptionCount: subscriptions.count,
-            outputMode: settings.outputMode,
             subscriptionServing: subscriptionServing,
             subscriptionURL: subscriptionURL,
             serviceRunning: serviceState.isRunning,
@@ -408,7 +407,6 @@ final class AppModel: ObservableObject {
         // 设置（比如节点命名）会把正在响应这次请求的那个监听器一起拆掉。
         let listenerChanged = previous.subscriptionPort != newSettings.subscriptionPort
             || previous.subscriptionToken != newSettings.subscriptionToken
-            || previous.outputMode != newSettings.outputMode
         if listenerChanged { await server.stop() }
         await syncServer()
         await refreshLogs()
@@ -431,12 +429,6 @@ final class AppModel: ObservableObject {
 
     func syncServer() async {
         let settings = self.settings
-        guard settings.outputMode.servesSubscription else {
-            await server.stop()
-            subscriptionServing = false
-            subscriptionError = nil
-            return
-        }
         let router = APIRouter(token: settings.subscriptionToken,
                                port: settings.subscriptionPort,
                                host: self)
@@ -793,10 +785,6 @@ final class AppModel: ObservableObject {
 
     /// 在默认浏览器里打开 Web 界面。
     func openWebInterface() {
-        guard settings.outputMode.servesSubscription else {
-            alertMessage = "Web 界面依赖本地服务，请先在「通用 → 输出到 Surge」里选择包含订阅地址的方式。"
-            return
-        }
         guard let url = URL(string: webInterfaceURL) else { return }
         NSWorkspace.shared.open(url)
     }

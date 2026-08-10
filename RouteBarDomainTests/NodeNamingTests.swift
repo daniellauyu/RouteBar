@@ -126,31 +126,24 @@ import Testing
         #expect(byID == ["tk": "01 东京", "hk": "02 香港"])
     }
 
-    /// 策略组那一行列的是全部代理名。原来靠 `RouteBar ` 前缀从生成文本里反推，
-    /// 名字可配置之后那个前缀不再成立，改成直接用生成结果带出来的名字。
-    @Test func proxyGroupListsCustomNamesInsteadOfMatchingAPrefix() throws {
+    /// 自定义模板拼出来的名字要真的出现在策略行和 `policyNames` 里。
+    ///
+    /// 这里原来测的是改写 Surge 配置时策略组那一行怎么拼——那个功能已经去掉了。
+    /// 但「名字可配置之后不能再靠 `RouteBar ` 前缀反推」这条约束仍然成立，
+    /// 只是现在的落点变成了交给客户端的那份清单。
+    @Test func customNamesFlowIntoThePolicyListAndNames() throws {
         let generated = try ConfigurationGenerator.generate(
             nodes: [node("香港"), node("东京")],
             naming: NodeNaming(template: "机场-{index}"))
-        let profile = """
-        [Proxy]
-        old = socks5, 127.0.0.1, 9999
-        [Proxy Group]
-        sing-box 节点 = select, old
-        [Rule]
-        FINAL,Main
-        """
 
-        let updated = try SurgeProfileUpdater.update(profile, with: generated)
-
-        #expect(updated.contains("机场-01 = socks5, 127.0.0.1, 7701"))
-        #expect(updated.contains("sing-box 节点 = select, \"机场-01\", \"机场-02\""))
-        #expect(!updated.contains("RouteBar"))
+        #expect(generated.surgePolicyList.contains("机场-01 = socks5, 127.0.0.1, 7701"))
+        #expect(generated.policyNames == ["机场-01", "机场-02"])
+        #expect(!generated.surgePolicyList.contains("RouteBar"))
     }
 
-    /// 本地订阅服务是按请求现算策略行的。两条路径必须用同一份命名规则，
-    /// 否则 `.both` 模式下同一个端口在两边会有两个名字。
-    @Test func policyListAndProfileShareTheSameNaming() throws {
+    /// 本地订阅服务是按请求现算策略行的，落盘那份是整批生成的。
+    /// 两条路径必须用同一份命名规则，否则同一个端口在两处会有两个名字。
+    @Test func policyListAndGeneratedOutputShareTheSameNaming() throws {
         let record = SubscriptionRecord(name: "A机场", nodeNameTemplate: "{subscription} {index}")
         let nodes = [node("香港", source: record.id), node("东京", source: record.id)]
         let naming = NodeNaming(template: NodeNaming.defaultTemplate, subscriptions: [record])

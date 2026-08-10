@@ -59,67 +59,47 @@ struct SettingsLandingView: View {
                     }
                 }
 
-                // 这一整节都是**可选的**，标题里必须说出来。
+                // 这一节讲的是本地服务，不是「怎么接 Surge」。
                 //
-                // RouteBar 的产出是节点页上那批本机端口，任何客户端填端口就能用；这里两个
-                // 选项吐的都是 Surge 语法，只是替 Surge 用户省掉手工拼配置。不点明的话，
-                // 用别的客户端的人会以为不配这一节就用不了——而他其实什么都不用配。
-                settingsSection("给 Surge 的现成接法（可选）") {
+                // RouteBar 的产出是节点页上那批本机端口，任何客户端填端口就能用；这里
+                // 多给的是一份现成的清单，Surge 可以用 policy-path 直接拉走。曾经这里
+                // 还有一个「写入 Surge 配置」的选项——它要改写一份由 Surge 创建、名字
+                // 由用户自己起的文件，路径只能靠猜，猜错就报错，已经整个去掉。
+                settingsSection("本地服务") {
                     settingsRow(
-                        title: "方式",
-                        detail: outputModeDetail,
-                        detailColor: model.settings.outputMode == .profile ? .secondary : .primary
+                        title: "订阅端口",
+                        detail: "本地订阅服务监听 127.0.0.1 的这个端口。改动会立即重启服务。"
                     ) {
-                        Picker("方式", selection: Binding(
-                            get: { model.settings.outputMode },
-                            set: { mode in
+                        TextField("", value: Binding(
+                            get: { model.settings.subscriptionPort },
+                            set: { port in
+                                guard (1024...65535).contains(port) else { return }
                                 var updated = model.settings
-                                updated.outputMode = mode
+                                updated.subscriptionPort = port
                                 model.saveSettings(updated)
                             }
-                        )) {
-                            ForEach(OutputMode.allCases) { Text($0.label).tag($0) }
-                        }
-                        .labelsHidden()
-                        .frame(width: 150)
+                        ), format: .number.grouping(.never))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 90)
                     }
-                    if model.settings.outputMode.servesSubscription {
-                        Divider()
-                        settingsRow(
-                            title: "订阅端口",
-                            detail: "本地订阅服务监听 127.0.0.1 的这个端口。改动会立即重启服务。"
-                        ) {
-                            TextField("", value: Binding(
-                                get: { model.settings.subscriptionPort },
-                                set: { port in
-                                    guard (1024...65535).contains(port) else { return }
-                                    var updated = model.settings
-                                    updated.subscriptionPort = port
-                                    model.saveSettings(updated)
-                                }
-                            ), format: .number.grouping(.never))
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 90)
-                        }
-                        Divider()
-                        settingsRow(
-                            title: "订阅地址",
-                            detail: "填进 Surge 策略组的 policy-path=。完整地址与用法见「服务」页。"
-                        ) {
-                            Button("复制") { model.copyText(model.subscriptionURL) }
-                                .controlSize(.small)
-                        }
-                        Divider()
-                        settingsRow(
-                            title: "Web 界面",
-                            detail: "同端口同令牌的浏览器界面，可在终端里用 open 直接打开，不必切到这个窗口。"
-                        ) {
-                            HStack(spacing: 6) {
-                                Button("复制") { model.copyText(model.webInterfaceURL) }
-                                Button("打开") { model.openWebInterface() }
-                            }
+                    Divider()
+                    settingsRow(
+                        title: "订阅地址",
+                        detail: "填进 Surge 策略组的 policy-path=。完整地址与用法见「服务」页。"
+                    ) {
+                        Button("复制") { model.copyText(model.subscriptionURL) }
                             .controlSize(.small)
+                    }
+                    Divider()
+                    settingsRow(
+                        title: "Web 界面",
+                        detail: "同端口同令牌的浏览器界面，可在终端里用 open 直接打开，不必切到这个窗口。"
+                    ) {
+                        HStack(spacing: 6) {
+                            Button("复制") { model.copyText(model.webInterfaceURL) }
+                            Button("打开") { model.openWebInterface() }
                         }
+                        .controlSize(.small)
                     }
                 }
 
@@ -127,7 +107,7 @@ struct SettingsLandingView: View {
                     settingsRow(
                         title: "名称模板",
                         detail: templateIsValid
-                            ? "决定这些出口在 Surge 里叫什么。改完按回车生效，会立即重新生成一次配置。"
+                            ? "决定这些出口在客户端里叫什么。改完按回车生效，会立即重新生成一次配置。"
                             : "模板里一个占位符都没有，所有节点会拼出同一个名字——RouteBar 会自动补序号，免得它们在 Surge 里互相覆盖。",
                         detailColor: templateIsValid ? .secondary : .orange
                     ) {
@@ -382,17 +362,6 @@ struct SettingsLandingView: View {
     }
 
     /// 两种方式的代价不一样，得说清楚再让用户选。
-    private var outputModeDetail: String {
-        switch model.settings.outputMode {
-        case .profile:
-            "直接改写托管配置的 [Proxy] 段。注意该段是整段替换的——里面除 RouteBar 之外的代理会在下次生成时消失。"
-        case .subscription:
-            "起一个本地 HTTP 服务，由 Surge 用 policy-path= 拉取，完全不碰配置文件，可与 sub.store 等外部订阅共存。只在 RouteBar 运行时可用。"
-        case .both:
-            "同时写入配置并提供订阅地址。两边会出现同名代理，除非你明确需要，一般选其中一种即可。"
-        }
-    }
-
     private var nextUpdateText: String {
         guard !model.autoUpdatePaused else { return "已暂停" }
         guard let next = model.nextUpdateDate else { return "暂无计划" }

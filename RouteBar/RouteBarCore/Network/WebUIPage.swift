@@ -283,7 +283,7 @@ enum WebUIPage {
       health.replaceChildren(...data.health.map((line) => element('div', 'health', '⚠ ' + line)));
 
       const output = data.output;
-      $('sub-card').hidden = !output.servesSubscription;
+      // 本地服务是唯一的输出方式，这张卡片无条件显示
       $('serve-state').textContent = output.serving ? '服务中' : (output.error || '未启动');
       $('sub-url').textContent = output.subscriptionURL;
       $('policy-line').textContent = output.surgePolicyLine;

@@ -62,9 +62,7 @@ struct MenuBarView: View {
         Divider()
 
         item("打开 RouteBar", symbol: "macwindow") { open(.overview) }
-        if model.settings.outputMode.servesSubscription {
-            item("打开 Web 界面", symbol: "safari") { model.openWebInterface() }
-        }
+        item("打开 Web 界面", symbol: "safari") { model.openWebInterface() }
         item("查看错误日志", symbol: "doc.text") { open(.service) }
 
         Divider()

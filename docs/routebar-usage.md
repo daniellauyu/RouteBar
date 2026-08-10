@@ -10,7 +10,7 @@ RouteBar 只往四个地方写东西，全部在你的用户目录下，没有�
 | 位置 | 内容 | 谁写的 |
 |---|---|---|
 | `~/Library/Application Support/RouteBar/state.json` | 订阅元数据与节点（**不含订阅地址**） | RouteBar |
-| `~/Library/Application Support/RouteBar/settings.json` | 路径、输出方式、订阅端口与令牌、节点命名模板 | RouteBar |
+| `~/Library/Application Support/RouteBar/settings.json` | 路径、订阅端口与令牌、节点命名模板 | RouteBar |
 | `~/Library/Application Support/RouteBar/sing-box.json`<br>`~/…/surge-proxies.conf` | 最近一次生成结果的副本，用来对照「装进去的到底是什么」 | RouteBar |
 | `~/Library/Application Support/RouteBar/bin/sing-box` | 只在**没有 Homebrew**、由「一键完成」下载安装时才有。有 brew 的机器上这个目录不存在 | RouteBar 下载 |
 | `~/.config/sing-box/surge-vless.json` | 真正在跑的 sing-box 配置 | RouteBar 生成，sing-box 读取 |
@@ -24,7 +24,7 @@ RouteBar 只往四个地方写东西，全部在你的用户目录下，没有�
 
 - **订阅地址只进钥匙串**，不进 `state.json`。那份文件会被 Time Machine 备份、被同步、
   被随手打开看，而订阅 URL 里的 token 等价于账号密码。
-- 覆盖 sing-box 配置、Surge 配置或 LaunchAgent 之前，原文件都会留一份同名的
+- 覆盖 sing-box 配置或 LaunchAgent 之前，原文件都会留一份同名的
   **`.routebar-backup`**。想手工回滚就去找它。
 
 `update.log` 在 v1.1.0 之后不再产生（运行日志改为内存缓冲 + 系统统一日志）。
@@ -36,8 +36,7 @@ RouteBar 只往四个地方写东西，全部在你的用户目录下，没有�
 **同一组方法**，所以行为不会分叉——包括改动后 500ms 合并重装、测速用哪个端点。
 挑手边顺的那个用即可，具体命令见 README 的「命令行」一节。
 
-网页与命令行都依赖本地服务，因此要求「通用 → 输出到 Surge」选了包含订阅地址的方式，
-且 RouteBar 正在运行。
+网页与命令行都依赖本地服务，因此要求 RouteBar 正在运行。
 
 ## 排查
 
@@ -109,10 +108,10 @@ xattr -dr com.apple.quarantine ~/Library/Application\ Support/RouteBar/bin/sing-
 
 ### Surge 里看不到节点 / 还是旧的
 
-- **用订阅地址方式**：Surge 会缓存上一次拉到的列表。RouteBar 没运行时那个端口是关的，
+- **策略集是缓存的**：Surge 会留着上一次拉到的列表。RouteBar 没运行时那个端口是关的，
   Surge 拉不到新的但旧的仍能用。确认 RouteBar 在跑，然后在 Surge 里手动刷新策略集。
-- **用写入配置方式**：确认「环境」页的 Surge 配置路径指对了，且那份配置**正在被 Surge 使用**
-  （改错一份没在用的配置是最常见的情况）。
+- **那行 `policy-path=` 加了吗**：RouteBar 不改你的配置，这一行要你自己写进策略组，
+  完整内容见「服务」页。
 - **名字全变了**：检查是不是改过节点命名模板。策略组里手工引用过旧名字的地方需要一并更新，
   见 README 的「节点命名」。
 
@@ -204,5 +203,9 @@ rm -rf /Applications/RouteBar.app
 sing-box 本体用 `brew uninstall sing-box` 卸载——如果它是「一键完成」在没有 brew 的机器上
 下载的，第 2 步已经连它一起删掉了（「环境」页的 sing-box 路径指到
 `Application Support/RouteBar/bin/` 就是这种情况）。Surge 那边：用订阅地址方式的话，
-把策略组里那行 `policy-path=` 删掉即可；用写入配置方式的话，`[Proxy]` 段里的
-RouteBar 代理需要手工清理，同目录下的 `.routebar-backup` 是覆盖前的原始版本。
+把策略组里那行 `policy-path=` 删掉即可——RouteBar 从不改写 Surge 的配置文件，
+所以没有别的东西要清理。
+
+> 从 1.13 及更早版本升上来的话另说：那些版本有一个「直接改写 `[Proxy]` 段」的模式，
+> 它写进去的代理行会留在原地变成死数据，需要手工清掉，同目录下的
+> `.routebar-backup` 是首次覆盖前的原始版本。

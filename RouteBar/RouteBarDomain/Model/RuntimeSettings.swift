@@ -10,11 +10,8 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
     public var singBoxConfigPath: String
     public var singBoxLogPath: String
     public var singBoxErrorLogPath: String
-    public var surgeProfilePath: String
     public var launchAgentPath: String
     public var launchAgentLabel: String
-    /// 额外为 Surge 铺哪种接法，见 `OutputMode`。本机端口不受它影响，永远都在。
-    public var outputMode: OutputMode
     /// 本地订阅服务监听的端口。默认避开 sing-box 用的 7701 起的连续段。
     public var subscriptionPort: Int
     /// 订阅地址里的随机路径段。
@@ -30,10 +27,8 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
                             singBoxConfigPath: String,
                             singBoxLogPath: String,
                             singBoxErrorLogPath: String,
-                            surgeProfilePath: String,
                             launchAgentPath: String,
                             launchAgentLabel: String,
-                            outputMode: OutputMode = .profile,
                             subscriptionPort: Int = 7899,
                             subscriptionToken: String = RouteBarSettings.makeToken(),
                             nodeNameTemplate: String = NodeNaming.defaultTemplate) {
@@ -41,10 +36,8 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
         self.singBoxConfigPath = singBoxConfigPath
         self.singBoxLogPath = singBoxLogPath
         self.singBoxErrorLogPath = singBoxErrorLogPath
-        self.surgeProfilePath = surgeProfilePath
         self.launchAgentPath = launchAgentPath
         self.launchAgentLabel = launchAgentLabel
-        self.outputMode = outputMode
         self.subscriptionPort = subscriptionPort
         self.subscriptionToken = subscriptionToken
         self.nodeNameTemplate = nodeNameTemplate
@@ -82,14 +75,12 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
     // `StateStore.loadSettings` 的写法是「解不出来就回落到默认值」——那样升级一次
     // 就会把用户配好的路径（包括首次启动接管到的 Label）悄悄冲掉。
 
+    // 老 settings.json 里还留着 `surgeProfilePath` 与 `surgeOutputMode` 两个键。
+    // 不在这里声明，解码时会被直接忽略；下一次保存就从文件里消失。
+    // 无须迁移代码——它们承载的功能已经整个去掉了，没有任何东西需要从中恢复。
     private enum CodingKeys: String, CodingKey {
         case singBoxBinaryPath, singBoxConfigPath, singBoxLogPath, singBoxErrorLogPath
-        case surgeProfilePath, launchAgentPath, launchAgentLabel
-        // 盘上的键名仍是 surgeOutputMode。字段本身早已不只属于 Surge（订阅地址那种
-        // 输出方式任何客户端都能用），所以属性改了名，但键名是**已经写进用户机器**的
-        // 东西——跟着改等于让所有老用户的输出方式在升级时被静默重置回默认值，
-        // 而这换来的只是一个没人会看见的字符串更好看。
-        case outputMode = "surgeOutputMode"
+        case launchAgentPath, launchAgentLabel
         case subscriptionPort, subscriptionToken, nodeNameTemplate
     }
 
@@ -100,10 +91,8 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
         singBoxConfigPath = try container.decode(String.self, forKey: .singBoxConfigPath)
         singBoxLogPath = try container.decode(String.self, forKey: .singBoxLogPath)
         singBoxErrorLogPath = try container.decode(String.self, forKey: .singBoxErrorLogPath)
-        surgeProfilePath = try container.decode(String.self, forKey: .surgeProfilePath)
         launchAgentPath = try container.decode(String.self, forKey: .launchAgentPath)
         launchAgentLabel = try container.decode(String.self, forKey: .launchAgentLabel)
-        outputMode = try container.decodeIfPresent(OutputMode.self, forKey: .outputMode) ?? .profile
         subscriptionPort = try container.decodeIfPresent(Int.self, forKey: .subscriptionPort) ?? fallback.subscriptionPort
         subscriptionToken = try container.decodeIfPresent(String.self, forKey: .subscriptionToken)
             ?? RouteBarSettings.makeToken()
@@ -123,37 +112,28 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
 
     /// 默认设置。
     ///
-    /// 这些只是**默认值**，7 项全部可以在「环境」页改，改后存进 settings.json。
+    /// 这些只是**默认值**，全部可以在「环境」页改，改后存进 settings.json。
     /// 已有 settings.json 的机器不受这里变动的影响。
+    ///
+    /// 现在每一项都指向 RouteBar 自己创建的东西，所以默认值总是对的。曾经有一项不是：
+    /// Surge 托管配置的路径只能猜一个文件名（`surge-singbox.conf`），而 Surge 的配置
+    /// 由用户自己命名，猜中的概率接近零——那正是「导入节点失败」的来源。
     public nonisolated static func defaults(
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
         bundleIdentifier: String? = Bundle.main.bundleIdentifier,
-        executableExists: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) },
-        directoryExists: (String) -> Bool = { path in
-            var isDirectory: ObjCBool = false
-            return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
-        }
+        executableExists: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
     ) -> RouteBarSettings {
         // Label 从 bundle id 派生：写死成某个作者的名字，别人装上之后
         // 会看到一个与自己无关的服务标识，还得手工改掉才不别扭。
         let label = "\(bundleIdentifier ?? "com.liuyude.RouteBar").sing-box"
         let binary = singBoxSearchPaths.first(where: executableExists) ?? singBoxSearchPaths[0]
-        let surgeProfiles = home.appendingPathComponent("Library/Application Support/Surge/Profiles")
-        // 机器上没有 Surge 就不该默认往它的配置里写。
-        //
-        // 以前无条件默认 `.profile`，于是没装 Surge 的人一导入订阅就撞上「Surge 托管配置
-        // 不存在」——而他根本不需要那份配置，他要的是节点页上那批端口。默认值必须是一个
-        // 在这台机器上真的走得通的值，否则新用户第一次用就卡死在一个与他无关的依赖上。
-        let mode: OutputMode = directoryExists(surgeProfiles.path) ? .profile : .subscription
         return RouteBarSettings(
             singBoxBinaryPath: binary,
             singBoxConfigPath: home.appendingPathComponent(".config/sing-box/surge-vless.json").path,
             singBoxLogPath: home.appendingPathComponent(".config/sing-box/surge-vless.log").path,
             singBoxErrorLogPath: home.appendingPathComponent(".config/sing-box/surge-vless-error.log").path,
-            surgeProfilePath: home.appendingPathComponent("Library/Application Support/Surge/Profiles/surge-singbox.conf").path,
             launchAgentPath: home.appendingPathComponent("Library/LaunchAgents/\(label).plist").path,
-            launchAgentLabel: label,
-            outputMode: mode
+            launchAgentLabel: label
         )
     }
 }
@@ -177,13 +157,9 @@ public struct RuntimePaths: Sendable, Equatable {
     public nonisolated var singBoxConfig: URL { URL(fileURLWithPath: settings.singBoxConfigPath) }
     public nonisolated var singBoxLog: URL { URL(fileURLWithPath: settings.singBoxLogPath) }
     public nonisolated var singBoxErrorLog: URL { URL(fileURLWithPath: settings.singBoxErrorLogPath) }
-    public nonisolated var surgeProfile: URL { URL(fileURLWithPath: settings.surgeProfilePath) }
     public nonisolated var launchAgent: URL { URL(fileURLWithPath: settings.launchAgentPath) }
     public nonisolated var appSupportDirectory: URL {
         home.appendingPathComponent("Library/Application Support/RouteBar", isDirectory: true)
-    }
-    public nonisolated var surgeProfilesDirectory: URL {
-        home.appendingPathComponent("Library/Application Support/Surge/Profiles", isDirectory: true)
     }
     public nonisolated var singBoxConfigDirectory: URL { singBoxConfig.deletingLastPathComponent() }
     /// launchctl 的服务标识：用户态 GUI 域 + Label。
@@ -196,35 +172,25 @@ public enum EnvironmentItemState: String, Codable, Sendable {
 }
 
 /// 环境自检结果：RouteBar 依赖的外部落点是否就位。
+///
+/// 这三项就是全部依赖，而且每一项都是 RouteBar 自己要读写的东西。曾经还有两项
+/// 「Surge Profiles 目录」和「Surge 托管配置」——那是改写 Surge 配置那种输出方式
+/// 留下的，它依赖一份**由别的应用创建、名字由用户自己起**的文件。默认值只能靠猜，
+/// 猜错就报「配置不存在」，而绝大多数人根本不需要那个文件。功能去掉后这两项一并消失。
 public struct RouteBarEnvironmentReport: Equatable, Sendable {
     public let singBoxBinary: EnvironmentItemState
-    public let surgeProfilesDirectory: EnvironmentItemState
-    public let surgeProfile: EnvironmentItemState
     public let singBoxConfigDirectory: EnvironmentItemState
     public let launchAgent: EnvironmentItemState
-    /// Surge 的那两项算不算数。
-    ///
-    /// RouteBar 产出的是一组本机 SOCKS5/HTTP 端口，Surge 只是消费它们的方式之一；
-    /// 只输出订阅地址时 RouteBar 根本不碰 Surge 配置文件，用别的客户端（甚至只用
-    /// 环境变量走 curl）的人压根没有那个文件。把它无条件算成「缺失」，等于让这些人
-    /// 永远顶着一条修不好的警告。
-    public let expectsSurgeProfile: Bool
 
-    public nonisolated init(paths: RuntimePaths, expectsSurgeProfile: Bool = true, exists: (URL) -> Bool) {
+    public nonisolated init(paths: RuntimePaths, exists: (URL) -> Bool) {
         singBoxBinary = exists(paths.singBoxBinary) ? .ready : .missing
-        surgeProfilesDirectory = exists(paths.surgeProfilesDirectory) ? .ready : .missing
-        surgeProfile = exists(paths.surgeProfile) ? .ready : .missing
         singBoxConfigDirectory = exists(paths.singBoxConfigDirectory) ? .ready : .missing
         launchAgent = exists(paths.launchAgent) ? .ready : .missing
-        self.expectsSurgeProfile = expectsSurgeProfile
     }
 
     public nonisolated var needsSetup: Bool { missingCount > 0 }
 
-    /// 只统计**当前配置下真正需要**的项。
     public nonisolated var missingCount: Int {
-        var items = [singBoxBinary, singBoxConfigDirectory, launchAgent]
-        if expectsSurgeProfile { items += [surgeProfilesDirectory, surgeProfile] }
-        return items.filter { $0 == .missing }.count
+        [singBoxBinary, singBoxConfigDirectory, launchAgent].filter { $0 == .missing }.count
     }
 }

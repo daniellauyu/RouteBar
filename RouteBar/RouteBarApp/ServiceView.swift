@@ -71,10 +71,9 @@ struct ServiceView: View {
         }
     }
 
-    /// 本地订阅地址。只在启用了该输出方式时出现。
-    @ViewBuilder
+    /// 本地订阅地址与 Web 界面。现在是唯一的输出方式，所以无条件出现。
     private var subscriptionCard: some View {
-        if model.settings.outputMode.servesSubscription {
+        Group {
             InfoCard("本地服务") {
                 HStack(spacing: 10) {
                     Circle()
@@ -136,8 +135,6 @@ struct ServiceView: View {
     private var filesCard: some View {
         InfoCard("托管文件") {
             PathRow(title: "sing-box 配置", url: model.runtimePaths.singBoxConfig)
-            Divider()
-            PathRow(title: "Surge 配置", url: model.runtimePaths.surgeProfile)
             Divider()
             PathRow(title: "LaunchAgent", url: model.runtimePaths.launchAgent)
             Divider()

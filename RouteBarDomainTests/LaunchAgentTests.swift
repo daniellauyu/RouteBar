@@ -9,7 +9,6 @@ import Testing
             singBoxConfigPath: "/Users/me/.config/sing-box/surge-vless.json",
             singBoxLogPath: "/Users/me/.config/sing-box/out.log",
             singBoxErrorLogPath: "/Users/me/.config/sing-box/err.log",
-            surgeProfilePath: "/Users/me/surge.conf",
             launchAgentPath: "/Users/me/Library/LaunchAgents/x.plist",
             launchAgentLabel: "com.example.RouteBar.sing-box")
     }
@@ -83,30 +82,6 @@ import Testing
         #expect(none.singBoxBinaryPath == "/opt/homebrew/bin/sing-box")
     }
 
-    /// 没装 Surge 的机器不能默认「写入 Surge 配置」。
-    ///
-    /// 以前无条件默认 `.profile`，结果没装 Surge 的人一导入订阅就撞上「Surge 托管配置
-    /// 不存在」——而他根本不需要那份配置，他要的是节点页上那批端口。默认值必须在这台
-    /// 机器上真的走得通，否则新用户第一次用就卡死在一个与他无关的依赖上。
-    @Test func outputModeDefaultsAwayFromSurgeWhenSurgeIsNotInstalled() {
-        let profilesDirectory = "/Users/me/Library/Application Support/Surge/Profiles"
-
-        let withSurge = RouteBarSettings.defaults(
-            home: URL(fileURLWithPath: "/Users/me"),
-            bundleIdentifier: "com.example.RouteBar",
-            executableExists: { _ in true },
-            directoryExists: { $0 == profilesDirectory })
-        #expect(withSurge.outputMode == .profile)
-
-        let withoutSurge = RouteBarSettings.defaults(
-            home: URL(fileURLWithPath: "/Users/me"),
-            bundleIdentifier: "com.example.RouteBar",
-            executableExists: { _ in true },
-            directoryExists: { _ in false })
-        // 订阅地址那种方式不需要任何预先存在的文件，是唯一开箱就走得通的默认值。
-        #expect(withoutSurge.outputMode == .subscription)
-        #expect(!withoutSurge.outputMode.writesProfile)
-    }
 }
 
 @Suite struct LaunchAgentDiscoveryTests {
@@ -141,8 +116,8 @@ import Testing
         #expect(settings.launchAgentLabel == "com.daniellau.sing-box-surge")
         #expect(settings.launchAgentPath == "/Users/me/Library/LaunchAgents/singbox.plist")
         #expect(settings.singBoxLogPath == "/Users/me/.config/sing-box/out.log")
-        // plist 里没有 Surge 配置这一项，应保留默认值而不是被清空。
-        #expect(settings.surgeProfilePath.hasSuffix("Surge/Profiles/surge-singbox.conf"))
+        // plist 里没有的项应保留默认值而不是被清空。
+        #expect(settings.subscriptionPort == 7899)
     }
 
     @Test func ignoresAgentsThatAreNotSingBox() throws {
