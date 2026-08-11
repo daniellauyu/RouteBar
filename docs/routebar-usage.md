@@ -27,7 +27,7 @@ RouteBar 只往四个地方写东西，全部在你的用户目录下，没有�
 - 覆盖 sing-box 配置或 LaunchAgent 之前，原文件都会留一份同名的
   **`.routebar-backup`**。想手工回滚就去找它。
 
-`update.log` 在 v1.1.0 之后不再产生（运行日志改为内存缓冲 + 系统统一日志）。
+`update.log` 在 v1.1.0 之后不再产生（改为内存缓冲 + 系统统一日志，见「日志」页）。
 如果你的目录里还有一个，那是旧版本留下的，可以直接删。
 
 ## 三个入口做的是同一件事
@@ -118,7 +118,7 @@ xattr -dr com.apple.quarantine ~/Library/Application\ Support/RouteBar/bin/sing-
 ### 服务起不来
 
 - **配置校验失败**：安装前会先跑 `sing-box check`，失败时正式配置一个字节都不会动。
-  错误内容在运行日志里。可以自己复现：
+  错误内容在「日志」页里。可以自己复现：
   ```sh
   sing-box check -c ~/.config/sing-box/surge-vless.json
   ```
@@ -168,12 +168,14 @@ curl -x socks5h://127.0.0.1:7701 -o /dev/null -w '%{http_code} %{time_total}\n' 
 - 测的是 **Surge/客户端 → 本地 sing-box → Reality 节点 → 测试站点**的端到端往返，
   天然包含多段握手，**不能套用直连节点常见的 100/200 ms 阈值**。RouteBar 用的分档是
   600 / 1000 ms。
-- 换测速端点后所有数字会整体平移，**不要和换之前的比**。运行日志会记录每次用了哪个端点。
+- 换测速端点后所有数字会整体平移，**不要和换之前的比**。「日志」页会记录每次用了哪个端点。
 - 测速要经本地端口，所以 sing-box 必须在跑。
 
 ### 想看更早的日志
 
-应用内的运行日志只保留最近 1000 条且重启清空，但同一批事件会镜像到系统统一日志：
+「日志」页按日期读归档：`~/Library/Application Support/RouteBar/logs/routebar-YYYY-MM-DD.log`，
+RouteBar 自己的记录和 sing-box 的都在里面，保留 14 天，在日期选择器里直接选那天即可。
+RouteBar 自身的事件还会镜像到系统统一日志：
 
 ```sh
 log show --last 2h --predicate 'subsystem BEGINSWITH "com.liuyude.RouteBar"'

@@ -21,7 +21,7 @@ enum SetupStepOutcome: Sendable, Equatable {
 
 /// 一次「一键完成」的运行状态。
 ///
-/// 存在 AppModel 里而不是视图的 `@State`：概览页的引导卡片和「开始使用」页是同一份
+/// 存在 AppModel 里而不是视图的 `@State`：概览页的引导卡片和「开始」页是同一份
 /// 视图的两个实例，跑到一半切页面时，状态放在视图里会连同进度一起丢掉。
 struct SetupAutomationRun: Sendable, Equatable {
     var isRunning = false

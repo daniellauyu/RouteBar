@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import SwiftUI
@@ -31,6 +32,9 @@ final class AppModel: ObservableObject {
     private var runtimePathsCache: RuntimePaths = RuntimePaths()
 
     init() {
+        // 归档管道要在写下第一条之前装好，否则「RouteBar 启动」这条——回溯时用来
+        // 定位「那天它到底跑起来没有」的那条——进不了当天的归档。
+        installLogArchiver()
         log.info("生命周期", "RouteBar 启动")
     }
 
@@ -104,7 +108,7 @@ final class AppModel: ObservableObject {
 
     private func presentErrors(_ errors: [String]) {
         guard !errors.isEmpty else { return }
-        // 一键流程自己会把每一步的成败写进清单和运行日志，最后还给一份总结。
+        // 一键流程自己会把每一步的成败写进清单和日志页，最后还给一份总结。
         // 这时再逐步弹窗，等于让用户在七个模态框之间点确定才能看到结果。
         guard !setupRun.isRunning else { return }
         alertMessage = errors.joined(separator: "\n\n")
@@ -394,29 +398,140 @@ final class AppModel: ObservableObject {
     }
 
     /// sing-box 日志读到哪儿了。按字节偏移续读，见 `RuntimeManager.readNewLines`。
+    ///
+    /// 落盘保存（见 `LogArchiveStore.loadIngestOffset`）：只留在内存里的话每次启动都会
+    /// 重读一遍并重新归档，同一批错误会按重启次数在归档里翻倍。
     private var singBoxLogOffset: UInt64 = 0
+    private var singBoxLogOffsetLoaded = false
 
-    /// 把 sing-box 新写的日志并进运行日志。
+    /// 把 sing-box 新写的日志并进日志页。
     ///
     /// 只收 `.warning` 及以上。sing-box 的 INFO 是**每条连接一行**——真机上 35 天
     /// 43 万行，全放进来的话，1000 条的环形缓冲会在几秒内被连接记录填满，
     /// RouteBar 自己的事件一条都留不下，等于把这一页毁掉。生成的配置已经把级别
     /// 降到 warn，这里再挡一道：老机器上那份历史日志里仍然全是 INFO。
     private func ingestSingBoxLog() async {
+        if !singBoxLogOffsetLoaded {
+            singBoxLogOffset = await coordinator.ingestOffset()
+            singBoxLogOffsetLoaded = true
+        }
         let chunk = await coordinator.newSingBoxLog(since: singBoxLogOffset)
         singBoxLogOffset = chunk.offset
+        await coordinator.saveIngestOffset(chunk.offset)
         guard !chunk.text.isEmpty else { return }
-        for line in SingBoxLogParser.parse(tail: chunk.text) where line.level >= .warning {
+        let lines = SingBoxLogParser.parse(tail: chunk.text)
+        guard !lines.isEmpty else { return }
+        // 先归档再筛：归档留全量（回溯「那天发生了什么」），内存缓冲只留要紧的。
+        await coordinator.archiveSingBoxLog(lines)
+        for line in lines where line.level >= .warning {
             log.ingest(line)
         }
+        await reloadDayIfShowing(lines.compactMap(\.timestamp))
+    }
+
+    // MARK: - 日志归档
+
+    @Published private(set) var logDates: [Date] = []
+    /// 日志页正在看哪一天。默认今天。
+    ///
+    /// 一律用**当天零点**，不是「此刻」：日期选择器要拿它和归档日期比相等，而归档
+    /// 日期是从文件名解析出来的零点。存着此刻的话永远比不中，选择器会显示成空的。
+    @Published var viewingDay: Date = Calendar.current.startOfDay(for: .now) {
+        didSet {
+            guard oldValue != viewingDay else { return }
+            Task { await loadDay() }
+        }
+    }
+    @Published private(set) var dayEntries: [RuntimeLogEntry] = []
+
+    /// 装上归档管道。启动时调一次。
+    ///
+    /// RouteBar 自己的记录也要进归档，否则日志页选「今天」只能看到 sing-box 那一半，
+    /// 订阅更新、配置生成、服务控制这些事件全不见了——而排查时要看的恰恰是
+    /// 这两条时间线怎么对上。
+    private func installLogArchiver() {
+        log.archiver = { [weak self] entry in
+            guard let self else { return }
+            let line = SingBoxLogLine(timestamp: entry.timestamp,
+                                      level: entry.level,
+                                      category: LogArchive.tag(routeBarCategory: entry.category),
+                                      message: entry.message)
+            Task {
+                await self.coordinator.archiveSingBoxLog([line])
+                await self.reloadDayIfShowing([entry.timestamp])
+            }
+        }
+    }
+
+    /// 刚归档的那批里只要有今天（或正在看的那天）的行，就把当前视图重读一遍。
+    ///
+    /// 判日期而不是无条件重读：翻着昨天的记录时，新来的今天的日志不该把视图顶掉。
+    private func reloadDayIfShowing(_ timestamps: [Date]) async {
+        let calendar = Calendar.current
+        let touched = timestamps.contains { calendar.isDate($0, inSameDayAs: viewingDay) }
+        guard touched else { return }
+        await loadDay()
+    }
+
+    func refreshLogDates() async {
+        let today = Calendar.current.startOfDay(for: .now)
+        var dates = await coordinator.archivedLogDates()
+        // 今天必须在列表里，哪怕还没归档过任何东西（全新安装、或今天刚删过）：
+        // 否则日期选择器是空的，而用户第一反应是「日志坏了」。
+        if !dates.contains(today) { dates.insert(today, at: 0) }
+        logDates = dates
+        // 正在看的那天被保留期清掉了，就退回最近的一天。
+        if !dates.contains(viewingDay), let newest = dates.first {
+            viewingDay = newest
+        }
+        await loadDay()
+    }
+
+    private func loadDay() async {
+        let day = viewingDay
+        dayEntries = await coordinator.archivedLog(day).map { line in
+            let (category, isRouteBar) = LogArchive.untag(line.category)
+            return RuntimeLogEntry(timestamp: line.timestamp ?? day, level: line.level,
+                                   category: category, message: line.message,
+                                   source: isRouteBar ? .routeBar : .singBox)
+        }
+    }
+
+    /// 删掉某一天的归档文件。
+    func deleteLog(_ day: Date) {
+        Task {
+            apply(await coordinator.deleteArchivedLog(day), alertOnError: true)
+            await refreshLogDates()
+            await loadDay()
+        }
+    }
+
+    /// 在访达里打开归档目录。
+    ///
+    /// 先建目录再打开：一次日志都没归档过时它还不存在，而那恰恰是用户最可能去
+    /// 翻一翻的时候——直接开一个不存在的路径，访达什么反应都没有。
+    func revealLogArchive() {
+        Task {
+            let directory = await coordinator.archivedLogDirectory()
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            NSWorkspace.shared.open(directory)
+        }
+    }
+
+    func archivedLogSizeText() async -> String {
+        let size = await coordinator.archivedLogSize()
+        guard size > 0 else { return "暂无归档" }
+        return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
 
     func clearSingBoxLogs() {
         Task {
             apply(await coordinator.clearSingBoxLogs(), alertOnError: true)
             // 文件被截断了，偏移必须跟着回到 0，否则下一次读会从一个已经不存在的
-            // 位置开始，新写进来的日志要等文件重新长到那个长度才看得见。
+            // 位置开始，新写进来的日志要等文件重新长到那个长度才看得见。落盘的那份
+            // 也要一起归零，不然下次启动又会读回旧偏移。
             singBoxLogOffset = 0
+            await coordinator.saveIngestOffset(0)
             await refreshLogs()
         }
     }
@@ -651,7 +766,7 @@ final class AppModel: ObservableObject {
 
     private func installSingBox() async -> SetupStepOutcome {
         // 进度同时送两个地方：清单上那行实时状态（回答「还活着吗」），
-        // 以及运行日志（事后排查时要能回看完整过程）。
+        // 以及日志页（事后排查时要能回看完整过程）。
         let installer = SingBoxInstaller { progress in
             Task { @MainActor [weak self] in
                 self?.reportSetupProgress(progress.message, fraction: progress.fraction)

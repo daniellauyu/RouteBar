@@ -150,7 +150,7 @@ Quantumult X 这些能把外部 SOCKS5 当作节点的客户端，都填 `127.0.
 |------|------|------|
 | `RouteBarDomain/` | 模型与纯逻辑：节点去重、配置生成、节点命名、订阅解析、排期、统一视图状态 | 只依赖 Foundation，无 I/O、无 SwiftUI。可单独跑 `swift test` |
 | `RouteBarCore/` | I/O：命令执行、launchctl、订阅拉取、延迟测试、钥匙串、落盘，以及编排这一切的 `SubscriptionCoordinator` | 依赖 Domain，不依赖 SwiftUI |
-| `RouteBarApp/` | 界面：`AppModel`、侧栏分区、各页面、运行日志、应用外壳 | 依赖前两层 |
+| `RouteBarApp/` | 界面：`AppModel`、侧栏分区、各页面、日志页、应用外壳 | 依赖前两层 |
 
 根目录的 `RouteBarApp.swift`（场景与 `AppDelegate`）与 `ContentView.swift`（转发到
 `MainWindowView`）保持极薄。
@@ -323,10 +323,30 @@ routebar web                # 浏览器打开 Web 界面
 
 ## 日志
 
-- **运行日志**页：RouteBar 自身的诊断记录（内存保留最近 1000 条，重启清空），
-  同时镜像到统一日志，更早的记录可用
-  `log show --predicate 'subsystem BEGINSWITH "com.liuyude.RouteBar"'` 查看。
-- **服务**页：sing-box 进程自己写的标准日志与错误日志文件。
+**日志**页是唯一的诊断入口：RouteBar 自己的记录（订阅更新、配置生成、服务控制、测速）
+与 sing-box 报出来的警告和错误按时间混排在一列，用「来源」列区分。
 
-排查顺序：先看服务页的错误日志有没有配置解析或 Reality 握手报错，再回运行日志看
-RouteBar 这边做了什么。
+读的是**按日期归档的文件**，不是内存缓冲——文件能跨重启活下来，也已经带着好几天的历史。
+左上角四档筛选由粗到细，每一档都在上一档的结果里再筛：
+
+| 筛选 | 说明 |
+| --- | --- |
+| 日期 | 最近两天显示为「今天 / 昨天」，更早的是日期加星期 |
+| 时段 | 全天，或当天的 `00–06 / 06–12 / 12–18 / 18–24` |
+| 级别 | `≥` 某级别 |
+| 来源 | RouteBar / sing-box |
+
+归档在 `~/Library/Application Support/RouteBar/logs/routebar-YYYY-MM-DD.log`，保留 14 天，
+右上角 `⋯` 菜单里可以直接打开这个文件夹，或删掉某一天。行格式和 sing-box 自己的一致，
+RouteBar 那侧的记录用 `routebar/` 作为分类前缀区分：
+
+```
++0800 2026-08-11 10:16:52 NOTICE routebar/配置: 已生成并安装 67 个节点出口
++0800 2026-08-11 09:49:01 ERROR connection: open connection to www.gstatic.com:80 …: EOF
+```
+
+sing-box 那份原始文件（`服务`页可打开）会被增量读进归档，读到哪个字节记在
+`logs/ingest-offset` 里，所以重启 RouteBar 不会把同一批行再归一次档。
+
+RouteBar 自身的记录同时镜像到系统统一日志，更早的可用
+`log show --predicate 'subsystem BEGINSWITH "com.liuyude.RouteBar"'` 查看。

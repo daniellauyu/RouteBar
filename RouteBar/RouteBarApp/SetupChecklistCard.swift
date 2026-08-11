@@ -6,7 +6,7 @@ import SwiftUI
 /// 这里只回答第一次打开时唯一的问题——**现在该做什么**，并且每一步都把能代劳的做掉。
 ///
 /// 两个地方用同一份视图：概览页顶部（未配完时才出现，保证首次启动第一眼就看得到）
-/// 和常驻的「开始使用」页。差别只在标题与页脚——步骤列表本身必须是同一段代码，
+/// 和常驻的「开始」页。差别只在标题与页脚——步骤列表本身必须是同一段代码，
 /// 各写一遍必然会在改了一处后漂移。
 struct SetupChecklistCard: View {
     /// 摆在哪儿。页面版的标题由 `navigationTitle` 与 `PageBar` 承担，不必自带。
@@ -41,7 +41,7 @@ struct SetupChecklistCard: View {
                 }
             }
             if context == .overview {
-                Text("这一栏在必需项全部完成后会从概览页消失；侧栏的「开始使用」一直在，随时能回来。")
+                Text("这一栏在必需项全部完成后会从概览页消失；侧栏的「开始」一直在，随时能回来。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -220,7 +220,7 @@ struct SetupChecklistCard: View {
 
 /// 「一键完成」按钮。
 ///
-/// 概览页卡片的标题行和「开始使用」页的顶栏共用这一个：两处各画一个的话，
+/// 概览页卡片的标题行和「开始」页的顶栏共用这一个：两处各画一个的话，
 /// 「什么时候该禁用」这条规则迟早会在一边被改漏。
 struct SetupAutomationButton: View {
     @EnvironmentObject private var model: AppModel

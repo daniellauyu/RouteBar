@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// 「开始使用」页：常驻的分步引导。
+/// 「开始」页：常驻的分步引导。
 ///
 /// 引导原来只在概览页顶部出现，必需项一做完就永久消失，有两个后果：跟着它点「去添加」
 /// 跳到订阅页之后，指引就不在视野里了；而路径失效导致步骤重新变红时，用户正处在
@@ -43,7 +43,7 @@ struct SetupView: View {
     private var subtitle: String {
         let checklist = model.setupChecklist
         if model.setupRun.isRunning {
-            return "正在按顺序处理，可以在「运行日志」里看实时输出。"
+            return "正在按顺序处理，可以在「日志」页里看实时输出。"
         }
         if !checklist.isComplete {
             let next = checklist.nextStep.map { "下一步是「\($0.title)」。" } ?? ""
@@ -69,7 +69,7 @@ struct SetupView: View {
                 Divider()
                 destination(
                     "代理连不上",
-                    "先看 sing-box 自己的输出：「服务」页有错误日志，「运行日志」是 RouteBar 这一侧的记录。",
+                    "先看 sing-box 自己的输出：「服务」页有错误日志，「日志」页是 RouteBar 这一侧的记录。",
                     label: "看日志") { model.selectedSection = .logs }
                 Divider()
                 documentation

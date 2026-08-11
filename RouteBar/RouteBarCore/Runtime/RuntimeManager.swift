@@ -183,7 +183,7 @@ public struct RuntimeManager: Sendable {
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// 从上次读到的位置继续往下读，用于把 sing-box 的新日志增量并进运行日志。
+    /// 从上次读到的位置继续往下读，用于把 sing-box 的新日志增量并进日志页。
     ///
     /// 按字节偏移续读而不是「比对上次那一行」：日志里大量行是逐字重复的
     /// （同一个目标反复失败），靠文本找位置必然会重复或漏掉一整段。

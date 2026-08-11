@@ -1,6 +1,6 @@
 import Foundation
 
-/// 运行日志级别。
+/// 日志级别。
 ///
 /// 定义在 Domain 层是因为引擎（`SubscriptionCoordinator`）也要产出带级别的消息，
 /// 而引擎不能依赖 SwiftUI。颜色等展示属性由应用层扩展补上。

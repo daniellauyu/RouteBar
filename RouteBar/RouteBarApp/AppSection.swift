@@ -28,11 +28,11 @@ enum AppSection: String, CaseIterable, Identifiable {
     /// 分步引导。常驻侧栏而不是只在概览页顶部露一次：引导本身会把用户支使到订阅页、
     /// 环境页去做事，跳走之后得有一条回来的路；路径失效（Homebrew 升级、Surge 换配置名）
     /// 时步骤会重新变红，那时用户是「出问题了」的心态，不会想到去概览页找它。
-    case setup = "开始使用"
+    case setup = "开始"
     case subscriptions = "订阅"
     case nodes = "节点"
     case service = "服务"
-    case logs = "运行日志"
+    case logs = "日志"
     case settings = "通用"
     case environment = "环境"
     case about = "关于"
@@ -42,7 +42,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .overview: "gauge.with.dots.needle.67percent"
-        case .setup: "list.bullet.clipboard"
+        case .setup: "play.circle"
         case .subscriptions: "square.3.layers.3d"
         case .nodes: "point.3.connected.trianglepath.dotted"
         case .service: "bolt.horizontal.circle"

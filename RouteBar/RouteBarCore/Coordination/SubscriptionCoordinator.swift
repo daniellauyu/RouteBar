@@ -1,7 +1,7 @@
 import os
 import Foundation
 
-/// 一次操作的结果：新的视图状态 + 该记进运行日志的消息。
+/// 一次操作的结果：新的视图状态 + 该记进日志页的消息。
 public struct CoordinatorOutcome: Sendable {
     public let state: AppViewState
     public let messages: [OutcomeMessage]
@@ -401,6 +401,50 @@ public actor SubscriptionCoordinator {
     /// 从头到尾是空的（真机上验证过，0 字节）。两份都读只会把同一批行读两遍。
     public func newSingBoxLog(since offset: UInt64) -> (text: String, offset: UInt64) {
         runtime.readNewLines(of: runtime.paths.singBoxErrorLog, from: offset)
+    }
+
+    private let logArchive = LogArchiveStore()
+    private var lastPrune: Date?
+
+    /// 把新读到的行按日期归档，并顺手清掉过期的。
+    ///
+    /// 归档的是**全部**行，不像内存缓冲那样只留 warning 以上：缓冲是「现在要注意
+    /// 什么」，归档是「那天到底发生了什么」，后者被过滤过就失去了回溯的意义。
+    public func archiveSingBoxLog(_ lines: [SingBoxLogLine]) {
+        do {
+            try logArchive.append(lines)
+        } catch {
+            CoreLog.configuration.error("归档日志失败：\(error.localizedDescription, privacy: .public)")
+        }
+        pruneIfDue()
+    }
+
+    /// 清理最多一小时来一次。
+    ///
+    /// RouteBar 自己的每一条记录都会走到这里（一次订阅更新就是几十条），而清理要
+    /// 列一遍目录。按次清理等于把一个每小时做一次就够的活儿做上几百遍。
+    private func pruneIfDue(now: Date = .now) {
+        if let lastPrune, now.timeIntervalSince(lastPrune) < 3600 { return }
+        lastPrune = now
+        logArchive.prune(now: now)
+    }
+
+    public func archivedLogDates() -> [Date] { logArchive.availableDates() }
+
+    public func archivedLog(_ date: Date) -> [SingBoxLogLine] { logArchive.read(date) }
+
+    public func archivedLogSize() -> Int64 { logArchive.totalSize() }
+
+    public func archivedLogDirectory() -> URL { logArchive.directory }
+
+    public func ingestOffset() -> UInt64 { logArchive.loadIngestOffset() }
+
+    public func saveIngestOffset(_ offset: UInt64) { logArchive.saveIngestOffset(offset) }
+
+    public func deleteArchivedLog(_ day: Date) -> CoordinatorOutcome {
+        let removed = logArchive.delete(day)
+        return outcome([.init(removed ? .notice : .warning, "日志",
+                              removed ? "已删除该日归档" : "该日没有归档文件可删")])
     }
 
     public func clearSingBoxLogs() -> CoordinatorOutcome {

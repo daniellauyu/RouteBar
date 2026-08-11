@@ -1,11 +1,11 @@
 import Foundation
 
-/// sing-box 写出来的一行日志，拆成 RouteBar 的运行日志能直接用的形状。
+/// sing-box 写出来的一行日志，拆成 RouteBar 的日志页能直接用的形状。
 public struct SingBoxLogLine: Sendable, Equatable {
     /// 启动失败那类日志（logrus 风格）不带时间戳，只好为 nil，由调用方补当前时间。
     public let timestamp: Date?
     public let level: LogLevel
-    /// 子系统：`outbound/vless`、`network`、`connection`……用作运行日志里的分类列。
+    /// 子系统：`outbound/vless`、`network`、`connection`……用作日志页里的分类列。
     public let category: String
     public let message: String
 
@@ -52,13 +52,15 @@ public enum SingBoxLogParser {
         return result
     }
 
-    /// sing-box 的级别名到 RouteBar 级别的映射。
+    /// 级别名到 `LogLevel` 的映射。
     ///
-    /// `notice` 没有对应项——那是 RouteBar 自己用来标记「我做了一件事」的级别，
-    /// sing-box 不产出它。
+    /// `NOTICE` 是 RouteBar 自己用来标记「我做了一件事」的级别，sing-box 从不产出它——
+    /// 之所以也认，是因为归档里同时存着 RouteBar 自己的记录，读回来时要能还原成
+    /// notice。少了这一档的话它会退化成普通 info，「刚做过什么」就淹在流水里了。
     public nonisolated static func level(named name: String) -> LogLevel? {
         switch name.uppercased() {
         case "TRACE", "DEBUG", "INFO": .info
+        case "NOTICE": .notice
         case "WARN", "WARNING": .warning
         case "ERROR", "FATAL", "PANIC": .error
         default: nil
@@ -80,6 +82,26 @@ public enum SingBoxLogParser {
     /// 解析一整段（`tail` 拿到的那种多行文本）。认不出的行安静丢掉。
     public nonisolated static func parse(tail: String) -> [SingBoxLogLine] {
         tail.split(separator: "\n", omittingEmptySubsequences: true).compactMap { parse(String($0)) }
+    }
+
+    /// 反向：把一条记录写回 sing-box 的行格式。
+    ///
+    /// 归档文件用**同一种格式**，于是读回来时复用 `parse`，不必再维护第二套读写规则——
+    /// 两套格式意味着两处都要改、而只改一处的后果是归档能写不能读，且要等到用户
+    /// 去翻历史时才发现。写出去的不带 ANSI：颜色是给终端看的，文件里只是噪声。
+    public nonisolated static func render(_ line: SingBoxLogLine) -> String {
+        let stamp = formatter.string(from: line.timestamp ?? Date())
+        let head = line.category == "sing-box" ? "" : "\(line.category): "
+        return "\(stamp) \(name(of: line.level)) \(head)\(line.message)"
+    }
+
+    private nonisolated static func name(of level: LogLevel) -> String {
+        switch level {
+        case .info: "INFO"
+        case .notice: "NOTICE"
+        case .warning: "WARN"
+        case .error: "ERROR"
+        }
     }
 
     // MARK: - 两种形态
@@ -112,7 +134,7 @@ public enum SingBoxLogParser {
 
     /// 去掉 `[连接号 耗时]` 那一段。
     ///
-    /// 连接号只在把同一条连接的多行串起来时有用，而运行日志是按事件读的，
+    /// 连接号只在把同一条连接的多行串起来时有用，而日志页是按事件读的，
     /// 每行前面挂一串十位数字只会把真正的内容推到看不见的地方。
     private nonisolated static func dropConnectionID(_ text: String) -> String {
         guard text.hasPrefix("["), let close = text.firstIndex(of: "]") else { return text }

@@ -3,7 +3,7 @@ import SwiftUI
 /// 服务页：sing-box 的运行状态、托管文件与它自己的日志。
 ///
 /// 原来这些内容分散在「服务管理」「日志」「设置」三页，排查一次问题要来回跳；
-/// 现在与 sing-box 进程有关的一切都在这一页，「运行日志」页只留 RouteBar 自身的记录。
+/// 现在与 sing-box 进程有关的一切都在这一页，「日志」页只留 RouteBar 自身的记录。
 struct ServiceView: View {
     @EnvironmentObject private var model: AppModel
 
@@ -139,7 +139,7 @@ struct ServiceView: View {
     ///
     /// 这里不再原样贴一大块文本：那份文件里 95% 是每条连接一行的 INFO，滚动着看
     /// 根本挑不出问题。真正要紧的（握手失败、端口占用、配置错误）已经按时间并进
-    /// 「运行日志」，和 RouteBar 自己的记录排在一起。这张卡片只负责两件事：
+    /// 「日志」页，和 RouteBar 自己的记录排在一起。这张卡片只负责两件事：
     /// 让你能打开原始文件，以及把它清掉。
     private var logCard: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -150,9 +150,11 @@ struct ServiceView: View {
                         .foregroundStyle(.secondary)
                         .frame(width: 18)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("警告与错误已并入「运行日志」").font(.callout.weight(.medium))
-                        Text("和 RouteBar 自己的记录按时间排在一起，可按来源筛选。"
-                             + "sing-box 的日志级别是 warn，所以那份文件不会再因为逐条连接而疯长。")
+                        Text("这份文件的内容已并入「日志」页").font(.callout.weight(.medium))
+                        Text("和 RouteBar 自己的记录按日期归档在一起，可按时段、级别、来源筛选，"
+                             + "保留 \(LogArchiveStore.retentionDays) 天。"
+                             + "sing-box 的日志级别是 warn，所以下面这份原始文件不会再因为逐条连接而疯长；"
+                             + "清空它不会动已经归档的历史。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
