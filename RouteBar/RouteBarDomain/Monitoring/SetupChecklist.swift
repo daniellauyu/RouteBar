@@ -116,7 +116,7 @@ public struct SetupChecklist: Sendable, Equatable {
             title: "添加订阅",
             done: "已有 \(subscriptionCount) 个订阅。",
             todo: "粘贴机场的订阅地址。地址只存进钥匙串，不写入任何配置文件。"
-                + "目前只解析 VLESS Reality 节点，其它协议会被跳过。",
+                + "支持 VLESS、SS、Trojan 与 VMess 节点。",
             isDone: subscriptionCount > 0,
             // 机场地址带着你的付费凭据，RouteBar 无处可猜也不该去猜——这是整条流水线上
             // 唯一必须由人提供的输入。

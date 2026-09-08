@@ -37,14 +37,32 @@ struct NodeInspectorView: View {
                             InfoRow("协议", node.protocolLabel)
                         }
 
-                        InfoCard("Reality") {
-                            InfoRow("流控", node.flow)
-                            Divider()
-                            InfoRow("SNI", node.serverName)
-                            Divider()
-                            InfoRow("uTLS 指纹", node.fingerprint)
-                            Divider()
-                            InfoRow("Short ID", node.shortID.isEmpty ? "—" : node.shortID)
+                        if node.protocolType == .vless && !node.publicKey.isEmpty {
+                            InfoCard("Reality") {
+                                InfoRow("流控", node.flow.isEmpty ? "—" : node.flow)
+                                Divider()
+                                InfoRow("SNI", node.serverName)
+                                Divider()
+                                InfoRow("uTLS 指纹", node.fingerprint)
+                                Divider()
+                                InfoRow("Short ID", node.shortID.isEmpty ? "—" : node.shortID)
+                            }
+                        } else if node.protocolType == .shadowsocks {
+                            InfoCard("连接参数") {
+                                InfoRow("加密方式", node.method)
+                                if !node.plugin.isEmpty {
+                                    Divider()
+                                    InfoRow("插件", node.plugin)
+                                }
+                            }
+                        } else {
+                            InfoCard("连接参数") {
+                                InfoRow("传输", node.transport.uppercased())
+                                if node.tlsEnabled {
+                                    Divider()
+                                    InfoRow("TLS SNI", node.serverName)
+                                }
+                            }
                         }
 
                         InfoCard("延迟") {

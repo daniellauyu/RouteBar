@@ -16,6 +16,7 @@ final class AppModel: ObservableObject {
     @Published var selectedSubscriptionID: UUID?
     @Published var selectedNodeID: String?
     @Published var subscriptionSearchText = ""
+    @Published var subscriptionProtocolFilter: ProxyProtocol?
     @Published var nodeSearchText = ""
     @Published var isUpdating = false
     @Published var updateProgress = 0.0
@@ -170,10 +171,14 @@ final class AppModel: ObservableObject {
     }
 
     var filteredSubscriptions: [SubscriptionRecord] {
-        guard !subscriptionSearchText.isEmpty else { return subscriptions }
-        return subscriptions.filter {
-            $0.name.localizedCaseInsensitiveContains(subscriptionSearchText)
-                || $0.note.localizedCaseInsensitiveContains(subscriptionSearchText)
+        return subscriptions.filter { subscription in
+            let matchesSearch = subscriptionSearchText.isEmpty
+                || subscription.name.localizedCaseInsensitiveContains(subscriptionSearchText)
+                || subscription.note.localizedCaseInsensitiveContains(subscriptionSearchText)
+            let matchesProtocol = subscriptionProtocolFilter.map { type in
+                subscription.nodes.contains { $0.protocolType == type }
+            } ?? true
+            return matchesSearch && matchesProtocol
         }
     }
 

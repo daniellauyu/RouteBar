@@ -29,6 +29,7 @@ private enum NodeSort: String, CaseIterable, Identifiable {
 struct NodesView: View {
     @EnvironmentObject private var model: AppModel
     @State private var sourceID: UUID?
+    @State private var protocolType: ProxyProtocol?
     @State private var region = allRegions
     @State private var latencyFilter: NodeLatencyFilter = .all
     @State private var sort: NodeSort = .name
@@ -97,6 +98,7 @@ struct NodesView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 10) {
                 sourcePicker.frame(width: 140)
+                protocolPicker.frame(width: 100)
                 regionPicker.frame(width: 110)
                 latencyPicker.frame(width: 130)
                 sortPicker.frame(width: 110)
@@ -106,11 +108,13 @@ struct NodesView: View {
             Grid(horizontalSpacing: 10, verticalSpacing: 8) {
                 GridRow {
                     sourcePicker.frame(maxWidth: .infinity)
+                    protocolPicker.frame(maxWidth: .infinity)
                     regionPicker.frame(maxWidth: .infinity)
                 }
                 GridRow {
                     latencyPicker.frame(maxWidth: .infinity)
                     sortPicker.frame(maxWidth: .infinity)
+                    Color.clear
                 }
             }
         }
@@ -131,6 +135,16 @@ struct NodesView: View {
     private var regionPicker: some View {
         Picker("地区", selection: $region) {
             ForEach(regions, id: \.self) { Text($0).tag($0) }
+        }
+        .labelsHidden()
+    }
+
+    private var protocolPicker: some View {
+        Picker("协议", selection: $protocolType) {
+            Text("全部协议").tag(ProxyProtocol?.none)
+            ForEach(ProxyProtocol.allCases) { type in
+                Text(type.label).tag(Optional(type))
+            }
         }
         .labelsHidden()
     }
@@ -202,8 +216,9 @@ struct NodesView: View {
                 || node.name.localizedCaseInsensitiveContains(search)
                 || node.server.localizedCaseInsensitiveContains(search)
             let matchesSource = sourceID.map { node.sourceIDs.contains($0) } ?? true
+            let matchesProtocol = protocolType.map { node.protocolType == $0 } ?? true
             let matchesRegion = region == Self.allRegions || inferredRegion(node.name) == region
-            return matchesSearch && matchesSource && matchesRegion && matchesLatency(node)
+            return matchesSearch && matchesSource && matchesProtocol && matchesRegion && matchesLatency(node)
         }
         .sorted { lhs, rhs in
             switch sort {

@@ -60,6 +60,21 @@ struct SubscriptionsView: View {
                     .padding(.bottom, 8)
             }
 
+            HStack {
+                Picker("协议", selection: $model.subscriptionProtocolFilter) {
+                    Text("全部协议").tag(ProxyProtocol?.none)
+                    ForEach(ProxyProtocol.allCases) { type in
+                        Text(type.label).tag(Optional(type))
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 130)
+                Spacer()
+            }
+            .controlSize(.small)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
+
             Divider()
 
             if model.subscriptions.isEmpty {
@@ -82,7 +97,8 @@ struct SubscriptionsView: View {
                 .searchable(text: $model.subscriptionSearchText, placement: .toolbar, prompt: "搜索订阅名称或备注")
                 .overlay {
                     if model.filteredSubscriptions.isEmpty {
-                        ContentUnavailableView.search(text: model.subscriptionSearchText)
+                        ContentUnavailableView("没有匹配的订阅", systemImage: "line.3.horizontal.decrease.circle",
+                                               description: Text("放宽搜索或协议筛选条件试试。"))
                     }
                 }
             }
@@ -126,7 +142,11 @@ private struct SubscriptionRow: View {
 
     /// 副标题一行讲清「多少节点 · 多久前更新 · 备注」——列表不再需要五列表头对齐。
     private var subtitle: String {
-        var parts = ["\(subscription.nodes.count) 个节点", relativeTime(subscription.updatedAt)]
+        let protocols = Set(subscription.nodes.map(\.protocolType)).sorted { $0.label < $1.label }
+            .map(\.label).joined(separator: "/")
+        var parts = ["\(subscription.nodes.count) 个节点"]
+        if !protocols.isEmpty { parts.append(protocols) }
+        parts.append(relativeTime(subscription.updatedAt))
         if !subscription.note.isEmpty { parts.append(subscription.note) }
         return parts.joined(separator: " · ")
     }

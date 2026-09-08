@@ -36,7 +36,7 @@ public struct GeneratedConfiguration: Sendable {
 ///
 /// 为什么一个节点开一个入站而不是用 sing-box 自己的选择器：分流决策留在 Surge 里做。
 /// Surge 看到的是一组普通 SOCKS5 代理，规则、策略组、测速都用它原生那一套；
-/// sing-box 只负责把某个本地端口的流量按 Reality 送出去，两边职责不重叠。
+/// sing-box 只负责把某个本地端口的流量按节点自己的上游协议送出去，两边职责不重叠。
 public enum ConfigurationGenerator {
     /// 只算「哪个节点占哪个本地端口」，不生成配置文档。
     ///
@@ -61,17 +61,8 @@ public enum ConfigurationGenerator {
             ["type": "mixed", "tag": tag("in", index), "listen": "127.0.0.1",
              "listen_port": item.localPort, "set_system_proxy": false]
         }
-        let outbounds: [[String: Any]] = mapped.enumerated().map { index, item in
-            let node = item.node
-            return [
-                "type": "vless", "tag": tag("out", index), "server": node.server,
-                "server_port": node.serverPort, "uuid": node.uuid, "flow": node.flow,
-                "tls": [
-                    "enabled": true, "server_name": node.serverName,
-                    "reality": ["enabled": true, "public_key": node.publicKey, "short_id": node.shortID],
-                    "utls": ["enabled": true, "fingerprint": node.fingerprint],
-                ],
-            ]
+        let outbounds = mapped.enumerated().map { index, item in
+            outbound(for: item.node, tag: tag("out", index))
         }
         // 入站与出站一一绑定：第 N 个端口只走第 N 个节点，绝不串台。
         let rules: [[String: Any]] = mapped.indices.map { index in
@@ -118,6 +109,73 @@ public enum ConfigurationGenerator {
         zip(names, mapped)
             .map { "\($0) = socks5, 127.0.0.1, \($1.localPort)" }
             .joined(separator: "\n") + "\n"
+    }
+
+    private nonisolated static func outbound(for node: ProxyNode, tag: String) -> [String: Any] {
+        var result: [String: Any] = [
+            "type": node.protocolType == .shadowsocks ? "shadowsocks" : node.protocolType.rawValue,
+            "tag": tag,
+            "server": node.server,
+            "server_port": node.serverPort,
+        ]
+
+        switch node.protocolType {
+        case .vless:
+            result["uuid"] = node.uuid
+            if !node.flow.isEmpty { result["flow"] = node.flow }
+        case .vmess:
+            result["uuid"] = node.uuid
+            result["security"] = node.security
+            result["alter_id"] = node.alterID
+        case .trojan:
+            result["password"] = node.password
+        case .shadowsocks:
+            result["method"] = node.method
+            result["password"] = node.password
+            if !node.plugin.isEmpty { result["plugin"] = node.plugin }
+            if !node.pluginOptions.isEmpty { result["plugin_opts"] = node.pluginOptions }
+        }
+
+        if node.protocolType != .shadowsocks, node.tlsEnabled {
+            var tls: [String: Any] = ["enabled": true, "server_name": node.serverName]
+            if node.allowInsecure { tls["insecure"] = true }
+            if !node.publicKey.isEmpty {
+                tls["reality"] = ["enabled": true, "public_key": node.publicKey, "short_id": node.shortID]
+            }
+            if !node.fingerprint.isEmpty {
+                tls["utls"] = ["enabled": true, "fingerprint": node.fingerprint]
+            }
+            result["tls"] = tls
+        }
+
+        if node.protocolType != .shadowsocks, let transport = transport(for: node) {
+            result["transport"] = transport
+        }
+        return result
+    }
+
+    private nonisolated static func transport(for node: ProxyNode) -> [String: Any]? {
+        switch node.transport.lowercased() {
+        case "", "tcp", "none":
+            return nil
+        case "ws", "websocket":
+            var result: [String: Any] = ["type": "ws"]
+            if !node.path.isEmpty { result["path"] = node.path }
+            if !node.transportHost.isEmpty { result["headers"] = ["Host": node.transportHost] }
+            return result
+        case "grpc":
+            var result: [String: Any] = ["type": "grpc"]
+            if !node.serviceName.isEmpty { result["service_name"] = node.serviceName }
+            return result
+        case "http", "h2":
+            var result: [String: Any] = ["type": "http"]
+            if !node.path.isEmpty { result["path"] = node.path }
+            if !node.transportHost.isEmpty { result["host"] = [node.transportHost] }
+            return result
+        default:
+            // 保留节点；未知传输不写进配置，避免生成 sing-box 不认识的 transport 类型。
+            return nil
+        }
     }
 
     /// sing-box 的内部标签。

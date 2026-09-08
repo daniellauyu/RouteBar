@@ -1,6 +1,6 @@
 # RouteBar
 
-RouteBar 是一个 macOS SwiftUI 应用：拉取机场订阅、解析并去重 VLESS Reality 节点、
+RouteBar 是一个 macOS SwiftUI 应用：拉取机场订阅、解析并去重 VLESS、SS、Trojan 与 VMess 节点、
 **为每个启用节点在本机开一个代理端口**（`127.0.0.1:7701` 起，同端口同时支持 SOCKS5 和 HTTP），
 并保持这批端口与订阅同步。
 
@@ -77,8 +77,8 @@ xattr -dr com.apple.quarantine /Applications/RouteBar.app
 不加国内镜像自动下载是有意的：sing-box 不提供官方 checksum、二进制只有 ad-hoc 签名，
 从第三方加速站拿到的东西无法验真，而这是要看你全部流量的代理内核。
 
-只解析 **VLESS Reality** 节点，订阅里的 ss / trojan / vmess 会被静默跳过，所以导入的节点
-可能比机场给的少。节点页每行都标了上游协议。
+支持 **VLESS、Shadowsocks、Trojan 和 VMess**，包括常见的 TCP、WebSocket、gRPC 与 HTTP
+传输。订阅页和节点页都可以按上游协议筛选，每个节点也会明确标出协议。
 
 ## 怎么用这些端口
 

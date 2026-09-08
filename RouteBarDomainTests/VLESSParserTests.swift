@@ -40,6 +40,47 @@ struct VLESSParserTests {
         #expect(carried[0].isEnabled == false)
         #expect(carried[0].latency?.milliseconds == 76)
     }
+
+    @Test func keepsMixedProtocolNodesFromPlainAndBase64Subscriptions() throws {
+        let credentials = Data("aes-128-gcm:secret".utf8).base64EncodedString()
+        let vmessObject: [String: Any] = [
+            "v": "2", "ps": "新加坡 VMess", "add": "vmess.example.com", "port": "443",
+            "id": "22222222-2222-2222-2222-222222222222", "aid": "0", "scy": "auto",
+            "net": "ws", "host": "cdn.example.com", "path": "/ws", "tls": "tls",
+            "sni": "cdn.example.com",
+        ]
+        let vmessData = try JSONSerialization.data(withJSONObject: vmessObject)
+        let mixed = [
+            uri,
+            "ss://\(credentials)@ss.example.com:8388#东京%20SS",
+            "trojan://p%40ss@trojan.example.com:443?security=tls&sni=example.com&type=grpc&serviceName=edge#美国%20Trojan",
+            "vmess://\(vmessData.base64EncodedString())",
+        ].joined(separator: "\n")
+
+        let plain = try SubscriptionParser.parseSubscription(Data(mixed.utf8), sourceID: sourceID)
+        let encoded = try SubscriptionParser.parseSubscription(
+            Data(Data(mixed.utf8).base64EncodedString().utf8), sourceID: sourceID)
+
+        #expect(plain.count == 4)
+        #expect(Set(plain.map(\.protocolType)) == Set(ProxyProtocol.allCases))
+        #expect(encoded.map(\.id) == plain.map(\.id))
+        #expect(plain.first { $0.protocolType == .shadowsocks }?.method == "aes-128-gcm")
+        #expect(plain.first { $0.protocolType == .trojan }?.password == "p@ss")
+        #expect(plain.first { $0.protocolType == .vmess }?.transport == "ws")
+    }
+
+    @Test func legacyPersistedNodeDecodesAsVLESSReality() throws {
+        let legacy = """
+        {"id":"legacy","name":"旧节点","server":"old.example.com","serverPort":443,
+         "uuid":"11111111-1111-1111-1111-111111111111","flow":"xtls-rprx-vision",
+         "serverName":"www.apple.com","publicKey":"pk","shortID":"sid","fingerprint":"chrome",
+         "sourceIDs":[],"isEnabled":true}
+        """
+        let node = try JSONDecoder().decode(ProxyNode.self, from: Data(legacy.utf8))
+        #expect(node.protocolType == .vless)
+        #expect(node.tlsEnabled)
+        #expect(node.protocolLabel == "VLESS-Reality")
+    }
 }
 
 struct SchedulingTests {

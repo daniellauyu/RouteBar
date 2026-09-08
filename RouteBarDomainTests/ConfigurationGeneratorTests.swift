@@ -25,6 +25,29 @@ struct ConfigurationGeneratorTests {
         #expect(result.surgeProxySection.contains("RouteBar 02 - Tokyo 02 = socks5, 127.0.0.1, 7702"))
     }
 
+    @Test func generatesOutboundMatchingEverySupportedProtocol() throws {
+        let source = UUID()
+        let credentials = Data("aes-256-gcm:secret".utf8).base64EncodedString()
+        let vmessJSON = #"{"v":"2","ps":"VMess","add":"vmess.example.com","port":"443","id":"22222222-2222-2222-2222-222222222222","aid":"0","scy":"auto","net":"ws","path":"/ws","host":"cdn.example.com","tls":"tls","sni":"cdn.example.com"}"#
+        let vmess = Data(vmessJSON.utf8).base64EncodedString()
+        let body = [
+            "vless://11111111-1111-1111-1111-111111111111@vless.example.com:443?security=tls&type=ws&path=%2Fedge&sni=vless.example.com#VLESS",
+            "ss://\(credentials)@ss.example.com:8388#SS",
+            "trojan://secret@trojan.example.com:443?security=tls&sni=trojan.example.com#Trojan",
+            "vmess://\(vmess)",
+        ].joined(separator: "\n")
+        let nodes = try SubscriptionParser.parseSubscription(Data(body.utf8), sourceID: source)
+        let result = try ConfigurationGenerator.generate(nodes: nodes)
+        let object = try #require(JSONSerialization.jsonObject(with: result.singBoxJSON) as? [String: Any])
+        let outbounds = try #require(object["outbounds"] as? [[String: Any]])
+        let types = Set(outbounds.compactMap { $0["type"] as? String })
+
+        #expect(types == ["vless", "shadowsocks", "trojan", "vmess"])
+        #expect(outbounds.first { $0["type"] as? String == "shadowsocks" }?["method"] as? String == "aes-256-gcm")
+        #expect(outbounds.first { $0["type"] as? String == "trojan" }?["password"] as? String == "secret")
+        #expect((outbounds.first { $0["type"] as? String == "vmess" }?["transport"] as? [String: Any])?["type"] as? String == "ws")
+    }
+
     @Test func runtimePathsExposeManagedConfigLogAndLaunchAgentLocations() {
         let home = URL(fileURLWithPath: "/Users/tester", isDirectory: true)
         let settings = RouteBarSettings.defaults(

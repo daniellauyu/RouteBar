@@ -1,16 +1,47 @@
 import Foundation
 
-/// 一个 VLESS Reality 节点。
+public enum ProxyProtocol: String, Codable, CaseIterable, Identifiable, Sendable {
+    case vless
+    case shadowsocks = "ss"
+    case trojan
+    case vmess
+
+    public nonisolated var id: String { rawValue }
+
+    public nonisolated var label: String {
+        switch self {
+        case .vless: "VLESS"
+        case .shadowsocks: "SS"
+        case .trojan: "Trojan"
+        case .vmess: "VMess"
+        }
+    }
+}
+
+/// 一个上游代理节点。
 ///
-/// `id` 不是随机 UUID，而是由「服务器 + 端口 + UUID + 公钥 + shortID」哈希得到的稳定指纹
-/// （见 `VLESSParser`）。机场经常换节点名、换排序，只有连接参数才是同一个节点的身份；
+/// `id` 不是随机 UUID，而是由协议和连接参数哈希得到的稳定指纹
+/// （见 `SubscriptionParser`）。机场经常换节点名、换排序，只有连接参数才是同一个节点的身份；
 /// 用指纹做主键，多个订阅里的同一节点才能被识别成一个，刷新订阅后启用状态和测速结果也才跟得住。
 public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
     public var id: String
     public var name: String
     public var server: String
     public var serverPort: Int
+    public var protocolType: ProxyProtocol
     public var uuid: String
+    public var password: String
+    public var method: String
+    public var alterID: Int
+    public var security: String
+    public var transport: String
+    public var transportHost: String
+    public var path: String
+    public var serviceName: String
+    public var tlsEnabled: Bool
+    public var allowInsecure: Bool
+    public var plugin: String
+    public var pluginOptions: String
     public var flow: String
     public var serverName: String
     public var publicKey: String
@@ -21,14 +52,33 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
     public var isEnabled: Bool
     public var latency: LatencyRecord?
 
-    public nonisolated init(id: String, name: String, server: String, serverPort: Int, uuid: String,
+    public nonisolated init(id: String, name: String, server: String, serverPort: Int,
+                            protocolType: ProxyProtocol = .vless, uuid: String,
+                            password: String = "", method: String = "", alterID: Int = 0,
+                            security: String = "auto", transport: String = "tcp",
+                            transportHost: String = "", path: String = "", serviceName: String = "",
+                            tlsEnabled: Bool = false, allowInsecure: Bool = false,
+                            plugin: String = "", pluginOptions: String = "",
                             flow: String, serverName: String, publicKey: String, shortID: String,
                             fingerprint: String, sourceIDs: [UUID], isEnabled: Bool, latency: LatencyRecord? = nil) {
         self.id = id
         self.name = name
         self.server = server
         self.serverPort = serverPort
+        self.protocolType = protocolType
         self.uuid = uuid
+        self.password = password
+        self.method = method
+        self.alterID = alterID
+        self.security = security
+        self.transport = transport
+        self.transportHost = transportHost
+        self.path = path
+        self.serviceName = serviceName
+        self.tlsEnabled = tlsEnabled
+        self.allowInsecure = allowInsecure
+        self.plugin = plugin
+        self.pluginOptions = pluginOptions
         self.flow = flow
         self.serverName = serverName
         self.publicKey = publicKey
@@ -42,11 +92,47 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
     /// 节点在**上游**用的协议，与 RouteBar 在本机暴露出的 SOCKS5 相区别。
     ///
     /// 列表里只看得到本地端口，那是 RouteBar 造出来的壳；真正决定这个节点能不能连通的是
-    /// 上游协议。今天它对每个节点都是同一个值，因为 `VLESSParser` 只认 VLESS Reality 链接——
-    /// 订阅里的 ss / trojan / vmess 会被**静默丢弃**。把协议标出来，正是为了让「导入的节点
-    /// 比订阅里少」这件事有迹可循，而不是让人以为节点凭空少了。
+    /// Reality 是 VLESS 的安全层，因此保留在标签里，筛选时仍归到 VLESS。
     public nonisolated var protocolLabel: String {
-        publicKey.isEmpty ? "VLESS" : "VLESS-Reality"
+        protocolType == .vless && !publicKey.isEmpty ? "VLESS-Reality" : protocolType.label
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, server, serverPort, protocolType, uuid, password, method, alterID, security
+        case transport, transportHost, path, serviceName, tlsEnabled, allowInsecure, plugin, pluginOptions
+        case flow, serverName, publicKey, shortID, fingerprint, sourceIDs, isEnabled, latency
+    }
+
+    /// 新增协议字段后仍能读取旧版本只含 VLESS Reality 字段的 state.json。
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        server = try container.decode(String.self, forKey: .server)
+        serverPort = try container.decode(Int.self, forKey: .serverPort)
+        protocolType = try container.decodeIfPresent(ProxyProtocol.self, forKey: .protocolType) ?? .vless
+        uuid = try container.decodeIfPresent(String.self, forKey: .uuid) ?? ""
+        password = try container.decodeIfPresent(String.self, forKey: .password) ?? ""
+        method = try container.decodeIfPresent(String.self, forKey: .method) ?? ""
+        alterID = try container.decodeIfPresent(Int.self, forKey: .alterID) ?? 0
+        security = try container.decodeIfPresent(String.self, forKey: .security) ?? "auto"
+        transport = try container.decodeIfPresent(String.self, forKey: .transport) ?? "tcp"
+        transportHost = try container.decodeIfPresent(String.self, forKey: .transportHost) ?? ""
+        path = try container.decodeIfPresent(String.self, forKey: .path) ?? ""
+        serviceName = try container.decodeIfPresent(String.self, forKey: .serviceName) ?? ""
+        tlsEnabled = try container.decodeIfPresent(Bool.self, forKey: .tlsEnabled)
+            ?? !(try container.decodeIfPresent(String.self, forKey: .publicKey) ?? "").isEmpty
+        allowInsecure = try container.decodeIfPresent(Bool.self, forKey: .allowInsecure) ?? false
+        plugin = try container.decodeIfPresent(String.self, forKey: .plugin) ?? ""
+        pluginOptions = try container.decodeIfPresent(String.self, forKey: .pluginOptions) ?? ""
+        flow = try container.decodeIfPresent(String.self, forKey: .flow) ?? ""
+        serverName = try container.decodeIfPresent(String.self, forKey: .serverName) ?? server
+        publicKey = try container.decodeIfPresent(String.self, forKey: .publicKey) ?? ""
+        shortID = try container.decodeIfPresent(String.self, forKey: .shortID) ?? ""
+        fingerprint = try container.decodeIfPresent(String.self, forKey: .fingerprint) ?? "chrome"
+        sourceIDs = try container.decodeIfPresent([UUID].self, forKey: .sourceIDs) ?? []
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        latency = try container.decodeIfPresent(LatencyRecord.self, forKey: .latency)
     }
 }
 
@@ -130,7 +216,7 @@ public struct LatencyRecord: Codable, Hashable, Sendable {
     }
 }
 
-/// RouteBar 测的是「Surge → 本地 sing-box → Reality 节点 → 测试站点」的端到端延迟，
+/// RouteBar 测的是「Surge → 本地 sing-box → 上游节点 → 测试站点」的端到端延迟，
 /// 天然包含多段握手与往返，不能套用直连节点常见的 100/200 ms 阈值。
 public enum LatencyBand: Sendable, Equatable {
     case untested, failed, fast, medium, slow

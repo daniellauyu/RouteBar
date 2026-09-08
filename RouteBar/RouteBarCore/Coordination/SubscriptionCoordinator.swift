@@ -234,7 +234,7 @@ public actor SubscriptionCoordinator {
         subscriptions[index].status = .updating
         do {
             let data = try await fetcher.fetch(url)
-            let parsed = try VLESSParser.parseSubscription(data, sourceID: id)
+            let parsed = try SubscriptionParser.parseSubscription(data, sourceID: id)
             guard !parsed.isEmpty else { throw SubscriptionError.empty }
             // 重新定位：await 期间列表可能已被增删。
             guard let current = subscriptions.firstIndex(where: { $0.id == id }) else { return outcome() }
@@ -520,6 +520,6 @@ public actor SubscriptionCoordinator {
 
     enum SubscriptionError: LocalizedError {
         case empty
-        var errorDescription: String? { "订阅中没有可用的 VLESS Reality 节点" }
+        var errorDescription: String? { "订阅中没有可用的 VLESS、SS、Trojan 或 VMess 节点" }
     }
 }

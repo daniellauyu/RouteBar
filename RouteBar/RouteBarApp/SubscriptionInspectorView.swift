@@ -31,6 +31,8 @@ struct SubscriptionInspectorView: View {
                         InfoCard("节点与更新") {
                             InfoRow("节点数", "\(subscription.nodes.count)")
                             Divider()
+                            InfoRow("协议", protocolSummary(subscription))
+                            Divider()
                             InfoRow("启用节点", "\(subscription.nodes.filter(\.isEnabled).count)")
                             Divider()
                             InfoRow("最后更新",
@@ -85,6 +87,13 @@ struct SubscriptionInspectorView: View {
         } else {
             ContentUnavailableView("选择一个订阅", systemImage: "sidebar.right")
         }
+    }
+
+    private func protocolSummary(_ subscription: SubscriptionRecord) -> String {
+        ProxyProtocol.allCases.compactMap { type in
+            let count = subscription.nodes.count { $0.protocolType == type }
+            return count > 0 ? "\(type.label) \(count)" : nil
+        }.joined(separator: " · ")
     }
 
     private var topBar: some View {

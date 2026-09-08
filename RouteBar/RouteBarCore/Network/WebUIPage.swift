@@ -180,7 +180,10 @@ enum WebUIPage {
       </div>
 
       <div class="card">
-        <h2>订阅</h2>
+        <div class="row between" style="margin-bottom:12px">
+          <h2 style="margin:0">订阅</h2>
+          <select id="sub-protocol-filter" style="width:120px"><option value="">全部协议</option></select>
+        </div>
         <div id="subs"></div>
         <form class="add" id="add-form">
           <input id="add-name" placeholder="名称" required>
@@ -317,14 +320,32 @@ enum WebUIPage {
 
     function renderSubscriptions(list) {
       const container = $('subs');
+      const picker = $('sub-protocol-filter');
+      const selected = picker.value;
+      const protocols = [...new Set(list.flatMap((sub) => sub.protocols || []))].sort();
+      picker.replaceChildren(element('option', null, '全部协议'),
+        ...protocols.map((protocol) => {
+          const option = element('option', null, protocol === 'ss' ? 'SS' :
+            protocol === 'vmess' ? 'VMess' : protocol === 'vless' ? 'VLESS' : 'Trojan');
+          option.value = protocol;
+          return option;
+        }));
+      picker.firstChild.value = '';
+      picker.value = protocols.includes(selected) ? selected : '';
+      const visible = picker.value ? list.filter((sub) => (sub.protocols || []).includes(picker.value)) : list;
       if (!list.length) {
         container.replaceChildren(element('div', 'dim', '还没有订阅，在下面添加一个。'));
+        return;
+      }
+      if (!visible.length) {
+        container.replaceChildren(element('div', 'dim', '没有包含该协议的订阅。'));
         return;
       }
       // 打开的编辑器所属订阅已被删除时，关掉它，免得留在一个不存在的对象上。
       if (editingId && !list.some((s) => s.id === editingId)) editingId = null;
 
-      container.replaceChildren(...list.map((sub, index) => {
+      container.replaceChildren(...visible.map((sub) => {
+        const index = list.findIndex((item) => item.id === sub.id);
         if (sub.id === editingId) return subscriptionEditor(sub, index);
 
         const item = element('div', 'item row between' + (sub.enabled ? '' : ' off'));
@@ -333,6 +354,8 @@ enum WebUIPage {
         left.append(element('div', null, sub.name));
         const meta = [sub.statusLabel, sub.nodeCount + ' 个节点', relative(sub.updatedAt),
                       '每 ' + sub.updateIntervalHours + ' 小时'];
+        if (sub.protocols && sub.protocols.length) meta.splice(2, 0,
+          sub.protocols.map((p) => p === 'ss' ? 'SS' : p === 'vmess' ? 'VMess' : p === 'vless' ? 'VLESS' : 'Trojan').join('/'));
         if (sub.note) meta.push(sub.note);
         if (sub.lastError) meta.push(sub.lastError);
         left.append(element('div', 'dim', meta.join(' · ')));
@@ -501,6 +524,7 @@ enum WebUIPage {
     $('btn-copy-url').onclick = () => copy(snapshot.output.subscriptionURL, '订阅地址');
     $('btn-copy-line').onclick = () => copy(snapshot.output.surgePolicyLine, '策略组行');
     $('filter').oninput = () => { if (snapshot) renderNodes(snapshot.nodes); };
+    $('sub-protocol-filter').onchange = () => { if (snapshot) renderSubscriptions(snapshot.subscriptions); };
 
     async function saveNaming(template) {
       const data = await call('/naming', 'POST', { template });

@@ -98,6 +98,8 @@ public struct APISubscription: nonisolated Codable, Sendable {
     public var updatedAt: Date?
     public var updateIntervalHours: Int
     public var nodeCount: Int
+    /// 此订阅实际包含的上游协议，用于 Web 订阅列表筛选。
+    public var protocols: [String]
     /// 这条订阅自己的节点名模板；没有覆盖时该键不出现，表示跟随全局。
     public var nodeNameTemplate: String?
 
@@ -112,6 +114,7 @@ public struct APISubscription: nonisolated Codable, Sendable {
         updatedAt = record.updatedAt
         updateIntervalHours = record.updateIntervalHours
         nodeCount = record.nodes.count
+        protocols = Set(record.nodes.map { $0.protocolType.rawValue }).sorted()
         nodeNameTemplate = record.nodeNameTemplate
     }
 }
