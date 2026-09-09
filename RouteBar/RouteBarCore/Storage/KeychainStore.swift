@@ -41,11 +41,26 @@ public struct KeychainStore: Sendable {
         return migrateLegacyItems()[id.uuidString]
     }
 
+    /// 保存一条订阅的地址。**地址没变就什么都不做。**
+    ///
+    /// 写入必然要重新声明一遍 ACL（见 `saveAll`），而 macOS 把「修改条目的 ACL」这个动作
+    /// 单独看管——即使读取已经完全放开，改 ACL 仍要用户输一次密码。于是「保存订阅」
+    /// 无论改了什么都会弹框：只改个名字、调一下更新间隔、换一个节点命名模板，
+    /// 地址一个字符没动，照样付一次密码的代价。
+    ///
+    /// 调用方（窗口的编辑器、网页的编辑表单）都是整份提交的，没法指望它们自己判断
+    /// 地址有没有变，所以这一步放在这里：`loadAll()` 本来就已经把旧值取回来了，
+    /// 比一下不要钱。
+    ///
+    /// 不写也就不会重置 ACL，因此跳过是安全的——需要重新声明 ACL 的前提正是「这次写了」。
     public nonisolated func set(_ value: String, for id: UUID) throws {
         var all = loadAll()
-        all[id.uuidString] = value
-        try saveAll(all)
+        if all[id.uuidString] != value {
+            all[id.uuidString] = value
+            try saveAll(all)
+        }
         // 同一条订阅的旧条目留着只会是一份读不到也删不掉的过期 token。
+        // 这一步不跟着上面的判断走：地址没变不代表旧条目已经清掉了。
         removeLegacyItem(id)
     }
 
@@ -114,6 +129,11 @@ public struct KeychainStore: Sendable {
     /// 这几个 API 自 10.10 起标记为废弃，替代品是数据保护钥匙串，而它在 macOS 上要求
     /// 签名带 `keychain-access-groups` 权限——ad-hoc 签名给不出这个权限，这条路走不通。
     /// 函数自身标为 deprecated 是为了让编译器闭嘴，不是说它将被移除。
+    ///
+    /// 这么标之后，**调用点（`saveAll`）会留下一条废弃警告**，那是消不掉的：不标的话
+    /// 函数体内 5 个废弃调用各报一条，标了就换成调用点 1 条；再往上给 `saveAll`、`set`
+    /// 也标，警告会一路传染到公开 API，而那几个方法并没有被废弃。这条警告是有意留下的
+    /// 最小残留，不是疏漏。
     @available(macOS, deprecated: 10.10, message: "SecAccess 系 API 已废弃，但数据保护钥匙串对 ad-hoc 签名不可用")
     private nonisolated func unrestrictedAccess() -> SecAccess? {
         var access: SecAccess?
