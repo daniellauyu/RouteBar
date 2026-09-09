@@ -345,7 +345,7 @@ final class AppModel: ObservableObject {
     }
 
     func testNode(_ id: String) async {
-        let mapped = await coordinator.mappedNodes().filter { $0.node.id == id }
+        let mapped = await coordinator.mappedNodes().filter { $0.node.entryID == id }
         await runLatencyTest(mapped)
     }
 
@@ -369,7 +369,7 @@ final class AppModel: ObservableObject {
             alertMessage = "sing-box 未在运行，测速要经过本地端口，请先启动服务。"
             return
         }
-        let ids = Set(mapped.map(\.node.id))
+        let ids = Set(mapped.map(\.node.entryID))
         testingNodeIDs.formUnion(ids)
         apply(await coordinator.testNodes(mapped, testURL: latencyTestURL, samples: latencySamples), alertOnError: true)
         testingNodeIDs.subtract(ids)
@@ -1032,7 +1032,7 @@ extension AppModel: RouteBarAPIHost {
     func apiSetNodeEnabled(_ enabled: Bool, id: String) async { await applyNodeEnabled(enabled, id: id) }
     func apiTestNode(_ id: String) async {
         guard let item = displayedNodes.first(where: { $0.id == id }), item.effectiveEnabled else { return }
-        await testNode(item.node.id)
+        await testNode(item.id)
     }
     func apiTestAllNodes() async { await testAllNodes() }
     func apiRegenerate() async { await regenerateAsync() }

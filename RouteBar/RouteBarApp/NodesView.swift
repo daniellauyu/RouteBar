@@ -77,7 +77,7 @@ struct NodesView: View {
                     ForEach(filteredNodes) { item in
                         NodeRow(item: item,
                                 number: nodeNumbers[item.id],
-                                outputName: item.effectiveEnabled ? outputNames[item.node.id] : nil)
+                                outputName: item.effectiveEnabled ? outputNames[item.id] : nil)
                             .tag(Optional(item.id))
                     }
                 }
@@ -195,7 +195,7 @@ struct NodesView: View {
     /// 整批算一次再按 id 取：名字里的序号取自完整列表的位置，重名补号也只有知道全部名字
     /// 才算得出来，逐行现算既不对也慢。
     private var outputNames: [String: String] {
-        model.nodeNaming.namesByNodeID(for: model.mappedNodes)
+        model.nodeNaming.namesByEntryID(for: model.mappedNodes)
     }
 
     // MARK: - 筛选
@@ -288,7 +288,7 @@ private struct NodeRow: View {
 
             Spacer(minLength: 12)
 
-            if model.testingNodeIDs.contains(item.node.id) {
+            if model.testingNodeIDs.contains(item.id) {
                 ProgressView().controlSize(.small)
             } else {
                 Text(verbatim: item.node.latencyText)

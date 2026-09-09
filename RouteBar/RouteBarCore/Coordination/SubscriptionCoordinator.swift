@@ -282,10 +282,10 @@ public actor SubscriptionCoordinator {
             return [.init(.info, "配置", "重新生成已被更新的改动取代，本次跳过")]
         }
 
-        let merged = NodeCatalog.merge(subscriptions.filter(\.isEnabled).flatMap(\.nodes))
+        let active = subscriptions.filter(\.isEnabled).flatMap(\.nodes)
         do {
             let generated = try ConfigurationGenerator.generate(
-                nodes: merged, naming: NodeNaming(settings: settings, subscriptions: subscriptions))
+                nodes: active, naming: NodeNaming(settings: settings, subscriptions: subscriptions))
             guard !generated.nodes.isEmpty else {
                 return [.init(.warning, "配置", "没有启用节点，已跳过生成")]
             }
@@ -365,7 +365,7 @@ public actor SubscriptionCoordinator {
     private func applyLatency(_ results: [String: LatencyRecord], endpoint: URL) -> CoordinatorOutcome {
         for subscriptionIndex in subscriptions.indices {
             for nodeIndex in subscriptions[subscriptionIndex].nodes.indices {
-                let id = subscriptions[subscriptionIndex].nodes[nodeIndex].id
+                let id = subscriptions[subscriptionIndex].nodes[nodeIndex].entryID
                 if let latency = results[id] {
                     subscriptions[subscriptionIndex].nodes[nodeIndex].latency = latency
                 }

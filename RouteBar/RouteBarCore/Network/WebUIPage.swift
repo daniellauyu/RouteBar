@@ -155,7 +155,7 @@ enum WebUIPage {
         <div class="grid" style="margin-top:16px">
           <div class="metric"><b id="m-nodes">–</b><span class="dim">启用条目</span></div>
           <div class="metric"><b id="m-total">–</b><span class="dim">全部条目</span></div>
-          <div class="metric"><b id="m-dedup">–</b><span class="dim">重复出口</span></div>
+          <div class="metric"><b id="m-dedup">–</b><span class="dim">重复连接</span></div>
           <div class="metric"><b id="m-tested">–</b><span class="dim">已测速</span></div>
           <div class="metric"><b id="m-failed">–</b><span class="dim">测速失败</span></div>
         </div>

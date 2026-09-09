@@ -47,7 +47,13 @@ public enum ConfigurationGenerator {
     /// `generate` 复用这个方法，两条路径的编号规则因此不可能分叉——否则界面显示的端口
     /// 会和真正写进配置的对不上，而这种错位极难发现。
     public nonisolated static func portMapping(nodes: [ProxyNode], startingPort: Int = 7701) -> [PortMappedNode] {
-        NodeCatalog.merge(nodes.filter(\.isEnabled))
+        nodes.filter(\.isEnabled)
+            .sorted {
+                let comparison = $0.name.localizedStandardCompare($1.name)
+                return comparison == .orderedSame
+                    ? $0.entryID < $1.entryID
+                    : comparison == .orderedAscending
+            }
             .enumerated()
             .map { PortMappedNode(node: $0.element, localPort: startingPort + $0.offset) }
     }

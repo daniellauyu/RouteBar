@@ -109,6 +109,11 @@ public struct NodeNaming: Sendable, Equatable {
         Dictionary(zip(mapped.map(\.node.id), names(for: mapped)), uniquingKeysWith: { first, _ in first })
     }
 
+    /// 原始订阅条目 id → 输出名。同一连接出现多次时，每条记录都有自己的端口和名称。
+    public nonisolated func namesByEntryID(for mapped: [PortMappedNode]) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: zip(mapped.map(\.node.entryID), names(for: mapped)).map { ($0, $1) })
+    }
+
     /// 一次试跑的结果：每个节点原来叫什么、按这份模板会叫什么。
     ///
     /// 「保存了才知道长什么样」是这个功能最难用的地方——模板是即时生效的，
@@ -138,7 +143,7 @@ public struct NodeNaming: Sendable, Equatable {
         let isSample = mapped.isEmpty
         let sample = isSample ? sampleNodes(subscriptions: subscriptions) : mapped
         let rows = zip(sample, naming.names(for: sample)).map { item, name in
-            PreviewRow(id: item.node.id, originalName: item.node.name,
+            PreviewRow(id: item.node.entryID, originalName: item.node.name,
                        outputName: name, localPort: item.localPort)
         }
         return (rows, isSample)

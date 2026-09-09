@@ -190,7 +190,7 @@ struct SchedulingTests {
         #expect(state.displayedNodes.contains { !$0.subscriptionEnabled })
         #expect(state.mergedNodes.count == 2)
         #expect(state.enabledNodes.count == 1)
-        #expect(state.testedNodeCount == 2)
+        #expect(state.testedNodeCount == 3)
         #expect(state.failedLatencyCount == 1)
         #expect(state.failedSubscriptionCount == 1)
     }

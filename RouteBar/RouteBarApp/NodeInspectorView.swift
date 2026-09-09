@@ -26,7 +26,7 @@ struct NodeInspectorView: View {
                                 Divider()
                                 // 机场给的名字和 RouteBar 生成的名字是两回事（后者由命名模板拼），
                                 // 在策略组里找不到某个节点时，要对的是这一行。
-                                InfoRow("生成的节点名", generatedName(for: node) ?? "—")
+                                InfoRow("生成的节点名", generatedName(for: item) ?? "—")
                             }
                         }
 
@@ -78,7 +78,7 @@ struct NodeInspectorView: View {
 
                         InfoCard("延迟") {
                             InfoRow("结果") {
-                                if model.testingNodeIDs.contains(node.id) {
+                                if model.testingNodeIDs.contains(item.id) {
                                     Text("测试中…")
                                 } else {
                                     Text(node.latencyText).foregroundStyle(node.latencyTint)
@@ -127,9 +127,9 @@ struct NodeInspectorView: View {
         let node = item.node
         return HStack(spacing: 8) {
             Button("测试延迟", systemImage: "speedometer") {
-                Task { await model.testNode(node.id) }
+                Task { await model.testNode(item.id) }
             }
-            .disabled(model.testingNodeIDs.contains(node.id) || !item.effectiveEnabled)
+            .disabled(model.testingNodeIDs.contains(item.id) || !item.effectiveEnabled)
             Button(node.isEnabled ? "禁用节点" : "启用节点",
                    systemImage: node.isEnabled ? "pause.circle" : "play.circle") {
                 model.setNodeEnabled(!node.isEnabled, id: item.id)
@@ -141,9 +141,9 @@ struct NodeInspectorView: View {
 
     /// 整批算再挑一个，而不是单独给这个节点拼一次：名字里的序号取自整批的位置，
     /// 重名时的补号也只有在知道全部名字时才算得出来。
-    private func generatedName(for node: ProxyNode) -> String? {
+    private func generatedName(for item: DisplayedNode) -> String? {
         let mapped = model.mappedNodes
-        guard let index = mapped.firstIndex(where: { $0.node.id == node.id }) else { return nil }
+        guard let index = mapped.firstIndex(where: { $0.node.entryID == item.id }) else { return nil }
         return model.nodeNaming.names(for: mapped)[index]
     }
 }

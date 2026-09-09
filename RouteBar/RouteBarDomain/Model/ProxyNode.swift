@@ -222,7 +222,7 @@ public struct PortMappedNode: Sendable, Identifiable {
         self.localPort = localPort
     }
 
-    public nonisolated var id: String { node.id }
+    public nonisolated var id: String { node.entryID }
 }
 
 public enum LatencyOutcome: String, Codable, Sendable {

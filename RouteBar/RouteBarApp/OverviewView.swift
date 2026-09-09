@@ -57,7 +57,7 @@ struct OverviewView: View {
             MetricTile(title: "可用节点",
                        value: "\(model.enabledNodeCount)",
                        symbol: "point.3.connected.trianglepath.dotted")
-            MetricTile(title: "去重",
+            MetricTile(title: "重复连接",
                        value: model.deduplicationRate.formatted(.percent.precision(.fractionLength(1))),
                        symbol: "checkmark.shield")
             MetricTile(title: "测速失败",
@@ -102,7 +102,7 @@ struct OverviewView: View {
             InfoCard {
                 InfoRow("订阅", "\(model.subscriptions.count) 个源 · 共 \(model.rawNodeCount) 个节点")
                 Divider()
-                InfoRow("去重", "合并为 \(model.mergedNodes.count) 个 · 启用 \(model.enabledNodeCount) 个")
+                InfoRow("节点", "完整保留 \(model.rawNodeCount) 条 · \(model.deduplicatedCount) 条连接参数重复")
                 Divider()
                 InfoRow("sing-box", "每个启用节点一个本机端口，自 7701 起，同端口收 SOCKS5 与 HTTP")
                 Divider()

@@ -33,10 +33,10 @@ public struct APISnapshot: nonisolated Codable, Sendable {
         subscriptions = state.subscriptions.map(APISubscription.init)
         // 端口来自快照里现算的映射，和即将写进 sing-box 配置的编号同源。
         // 输出名同样整批算一次：逐个节点现算的话，名字里的序号和重名补号都算不对。
-        let outputNames = state.nodeNaming.namesByNodeID(for: state.mappedNodes)
+        let outputNames = state.nodeNaming.namesByEntryID(for: state.mappedNodes)
         nodes = state.displayedNodes.map {
             APINode(item: $0, localPort: $0.localPort,
-                    outputName: $0.effectiveEnabled ? outputNames[$0.node.id] : nil)
+                    outputName: $0.effectiveEnabled ? outputNames[$0.id] : nil)
         }
         output = APIOutput(settings: state.settings, serving: subscriptionServing, error: subscriptionError)
         naming = APINaming(state: state)

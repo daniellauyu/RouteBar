@@ -25,6 +25,21 @@ struct ConfigurationGeneratorTests {
         #expect(result.surgeProxySection.contains("RouteBar 02 - Tokyo 02 = socks5, 127.0.0.1, 7702"))
     }
 
+    @Test func preservesDuplicateEndpointsAsDistinctNamedOutputs() throws {
+        var traffic = makeNode("剩余流量：93.38 GB", "shared.example.com")
+        traffic.entryID = "traffic-entry"
+        var vip = makeNode("[vip1]香港", "shared.example.com")
+        vip.entryID = "vip-entry"
+
+        let result = try ConfigurationGenerator.generate(
+            nodes: [traffic, vip], naming: NodeNaming(template: "JSSR-{index}-{name}"))
+
+        #expect(result.nodes.count == 2)
+        #expect(result.nodes.map(\.node.entryID) == ["vip-entry", "traffic-entry"])
+        #expect(result.nodes.map(\.localPort) == [7701, 7702])
+        #expect(result.policyNames == ["JSSR-01-[vip1]香港", "JSSR-02-剩余流量：93.38 GB"])
+    }
+
     @Test func generatesOutboundMatchingEverySupportedProtocol() throws {
         let source = UUID()
         let credentials = Data("aes-256-gcm:secret".utf8).base64EncodedString()

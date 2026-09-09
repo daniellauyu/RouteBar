@@ -86,17 +86,17 @@ public struct AppViewState: Sendable {
         self.mappedNodes = mappedNodes
         self.generatedAt = generatedAt
         let merged = NodeCatalog.merge(subscriptions.filter(\.isEnabled).flatMap(\.nodes))
-        let enabled = merged.filter(\.isEnabled)
+        let enabled = subscriptions.filter(\.isEnabled).flatMap(\.nodes).filter(\.isEnabled)
         let rawCount = subscriptions.reduce(0) { $0 + $1.nodes.count }
         let allUnique = NodeCatalog.merge(subscriptions.flatMap(\.nodes))
         let deduplicated = max(0, rawCount - allUnique.count)
-        let ports = Dictionary(mappedNodes.map { ($0.node.id, $0.localPort) },
+        let ports = Dictionary(mappedNodes.map { ($0.node.entryID, $0.localPort) },
                                uniquingKeysWith: { first, _ in first })
         displayedNodes = subscriptions.flatMap { subscription in
             subscription.nodes.map { node in
                 DisplayedNode(node: node, sourceID: subscription.id, sourceName: subscription.name,
                               subscriptionEnabled: subscription.isEnabled,
-                              localPort: subscription.isEnabled && node.isEnabled ? ports[node.id] : nil)
+                              localPort: subscription.isEnabled && node.isEnabled ? ports[node.entryID] : nil)
             }
         }
         let enabledSubscriptions = subscriptions.filter(\.isEnabled).count
@@ -129,8 +129,10 @@ public struct AppViewState: Sendable {
         rawNodeCount = rawCount
         deduplicatedCount = deduplicated
         deduplicationRate = rawCount == 0 ? 0 : Double(deduplicated) / Double(rawCount)
-        testedNodeCount = merged.lazy.filter { $0.latency != nil }.count
-        failedLatencyCount = merged.lazy.filter { $0.latency != nil && $0.latency?.outcome != .success }.count
+        testedNodeCount = displayedNodes.lazy.filter { $0.node.latency != nil }.count
+        failedLatencyCount = displayedNodes.lazy.filter {
+            $0.node.latency != nil && $0.node.latency?.outcome != .success
+        }.count
         enabledSubscriptionCount = enabledSubscriptions
         failedSubscriptionCount = failedSubscriptions
         nextUpdateDate = autoUpdatePaused

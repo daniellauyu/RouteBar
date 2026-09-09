@@ -61,7 +61,7 @@ public struct LatencyTester: Sendable {
                 break
             }
         }
-        return (mapped.node.id, best ?? LatencyRecord(outcome: .connectionFailed, milliseconds: nil))
+        return (mapped.node.entryID, best ?? LatencyRecord(outcome: .connectionFailed, milliseconds: nil))
     }
 
     private nonisolated func probe(_ mapped: PortMappedNode) async -> (String, LatencyRecord) {
@@ -84,7 +84,7 @@ public struct LatencyTester: Sendable {
             let milliseconds = metrics.milliseconds(fallback: elapsed)
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             let outcome: LatencyOutcome = (200..<400).contains(code) ? .success : .httpFailed
-            return (mapped.node.id, LatencyRecord(outcome: outcome, milliseconds: outcome == .success ? milliseconds : nil))
+            return (mapped.node.entryID, LatencyRecord(outcome: outcome, milliseconds: outcome == .success ? milliseconds : nil))
         } catch let error as URLError {
             // 记下 URLError 的原始码：界面上只有「连接失败」三个字，而这一类失败里
             // 混着完全不同的东西——节点真挂了（-1004）、代理端口没开（-1004）、
@@ -92,9 +92,9 @@ public struct LatencyTester: Sendable {
             // 不记的话，「全部失败」这种最需要解释的情况恰恰什么线索都没有。
             CoreLog.latency.debug("端口 \(mapped.localPort) 测速失败：URLError \(error.code.rawValue)")
             let outcome: LatencyOutcome = error.code == .timedOut ? .timeout : .connectionFailed
-            return (mapped.node.id, LatencyRecord(outcome: outcome, milliseconds: nil))
+            return (mapped.node.entryID, LatencyRecord(outcome: outcome, milliseconds: nil))
         } catch {
-            return (mapped.node.id, LatencyRecord(outcome: .connectionFailed, milliseconds: nil))
+            return (mapped.node.entryID, LatencyRecord(outcome: .connectionFailed, milliseconds: nil))
         }
     }
 }

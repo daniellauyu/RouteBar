@@ -153,8 +153,8 @@ def print_status(data):
 
     counts = data["counts"]
     print(f"  节点条目 {bold(counts['enabledNodes'])}/{counts['nodes']} 启用"
-          f" · 唯一出口 {counts['configuredNodes']}"
-          f" · 重复出口 {counts['deduplicated']}"
+          f" · 本地出口 {counts['configuredNodes']}"
+          f" · 重复连接 {counts['deduplicated']}"
           f" · 已测速 {counts['tested']}"
           f" · 测速失败 {counts['failedLatency']}")
 
