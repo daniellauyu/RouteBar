@@ -250,6 +250,7 @@ enum WebUIPage {
 
         <script>
         const I18N = \(WebUIStrings.js);
+        const FAVICONS = \(faviconJS);
         \(WebUIScript.js)
         </script>
         </body>
@@ -326,8 +327,33 @@ enum WebUIPage {
     /// 这个界面的既有约束，多开一条路由还要过令牌校验（浏览器请求 favicon 时不带令牌，
     /// 只会拿到 404）。
     ///
-    /// SVG 内部带一条 `prefers-color-scheme` 媒体查询，深色标签栏下线条翻白——
-    /// 写死黑色的话，在深色浏览器界面里就是一团看不见的东西。
+    /// 深浅两张分开出，由脚本按**系统配色**换整张图；SVG 内部写 `prefers-color-scheme`
+    /// 是不管用的——只有 Firefox 会按标签栏配色重算，Chrome 与 Safari 把 favicon 当静态
+    /// 图片渲染，那条媒体查询恒不命中，写死的黑线在深色标签栏里就是一团看不见的东西。
+    private nonisolated static func faviconURI(ink: String) -> String {
+        "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E"
+            + "%3Cg fill='none' stroke='\(ink)' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E"
+            + "%3Cpath d='M4.6 3.6h5.2c2.8 0 3.1 3.9 5.1 8.4'/%3E"
+            + "%3Cpath d='M4.6 12h10.3'/%3E"
+            + "%3Cpath d='M4.6 20.4h5.2c2.8 0 3.1-3.9 5.1-8.4'/%3E%3C/g%3E"
+            + "%3Cg fill='\(ink)'%3E"
+            + "%3Ccircle cx='3.5' cy='3.6' r='1.95'/%3E"
+            + "%3Ccircle cx='3.5' cy='12' r='1.95'/%3E"
+            + "%3Ccircle cx='3.5' cy='20.4' r='1.95'/%3E%3C/g%3E"
+            + "%3Cg fill='none' stroke='%2316A9E8' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E"
+            + "%3Cpath d='M14.9 12c3.4 0 4.7-1.9 5.4-4.6'/%3E"
+            + "%3Cpath d='M17.4 7.3h3v3'/%3E%3C/g%3E%3C/svg%3E"
+    }
+
+    /// 浅色标签栏配深墨线，深色标签栏配浅墨线；箭头两张都保持品牌蓝，那是它的身份。
+    private nonisolated static let faviconLight = faviconURI(ink: "%23111")
+    private nonisolated static let faviconDark = faviconURI(ink: "%23f5f6f8")
+
+    /// 首屏先挂浅色那张，脚本一跑起来立刻换成对的那张。带 `id` 是为了让脚本找得到它。
     private nonisolated static let favicon =
-        "<link rel=\"icon\" href=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cstyle%3E.k%7Bstroke:%23111%7D.d%7Bfill:%23111%7D%40media (prefers-color-scheme:dark)%7B.k%7Bstroke:%23f5f6f8%7D.d%7Bfill:%23f5f6f8%7D%7D%3C/style%3E%3Cg class='k' fill='none' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.6 3.6h5.2c2.8 0 3.1 3.9 5.1 8.4'/%3E%3Cpath d='M4.6 12h10.3'/%3E%3Cpath d='M4.6 20.4h5.2c2.8 0 3.1-3.9 5.1-8.4'/%3E%3C/g%3E%3Cg class='d'%3E%3Ccircle cx='3.5' cy='3.6' r='1.95'/%3E%3Ccircle cx='3.5' cy='12' r='1.95'/%3E%3Ccircle cx='3.5' cy='20.4' r='1.95'/%3E%3C/g%3E%3Cg fill='none' stroke='%2316A9E8' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14.9 12c3.4 0 4.7-1.9 5.4-4.6'/%3E%3Cpath d='M17.4 7.3h3v3'/%3E%3C/g%3E%3C/svg%3E\">"
+        "<link rel=\"icon\" id=\"favicon\" type=\"image/svg+xml\" href=\"\(faviconLight)\">"
+
+    /// 两张图一并交给脚本，省得在 JS 里把同一个标记再画一遍。
+    private nonisolated static let faviconJS =
+        "{light:\"\(faviconLight)\",dark:\"\(faviconDark)\"}"
 }

@@ -14,6 +14,8 @@ const source = fs.readFileSync(path.join(__dirname, '../RouteBar/RouteBarCore/Ne
 const context = vm.createContext({
   location: { pathname: '/token/' },
   I18N: { zh: {} },
+  FAVICONS: { light: 'light-icon', dark: 'dark-icon' },
+  window: { matchMedia: () => ({ matches: false, addEventListener() {}, addListener() {} }) },
   document: {
     addEventListener() {},
     createElement: (tag) => new Element(tag),

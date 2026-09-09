@@ -113,6 +113,28 @@ enum WebUIScript {
     document.addEventListener('click', closeThemeMenu);
     document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeThemeMenu(); });
 
+    /* ══════════ 标签页图标 ══════════ */
+
+    /* 图标画在浏览器的标签栏里，不在页面里，所以跟的是**系统配色**而不是上面那个主题
+       选择器：页面选「日间」时标签栏照样可能是深色的。整张图换掉，不改 SVG 里的颜色——
+       favicon 在 Chrome / Safari 里当静态图片渲染，改不到它内部的样式。 */
+    const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+    /* 换的是整个 <link> 而不是它的 href：只改 href 时 Safari 常常不重画标签页。 */
+    function syncFavicon() {
+      const previous = $('favicon');
+      const link = document.createElement('link');
+      link.id = 'favicon';
+      link.rel = 'icon';
+      link.type = 'image/svg+xml';
+      link.href = systemDark.matches ? FAVICONS.dark : FAVICONS.light;
+      if (previous) previous.remove();
+      document.head.appendChild(link);
+    }
+
+    if (systemDark.addEventListener) systemDark.addEventListener('change', syncFavicon);
+    else if (systemDark.addListener) systemDark.addListener(syncFavicon);
+
     /* ══════════ 分页 ══════════ */
 
     function showTab(id) {
@@ -836,6 +858,7 @@ enum WebUIScript {
         savedTab = localStorage.getItem('routebar.tab');
       } catch (e) {}
       setTheme(savedTheme || 'auto');
+      syncFavicon();
       setLang(savedLang || 'auto');
       showTab(savedTab || 'overview');
       renderPresets();
