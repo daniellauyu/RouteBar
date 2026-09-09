@@ -318,6 +318,11 @@ enum WebUIPage {
         '可用占位符：' + naming.placeholders.map((p) => p.token + ' ' + p.summary).join('、');
     }
 
+    function protocolText(protocol) {
+      return { ss: 'SS', vmess: 'VMess', vless: 'VLESS', trojan: 'Trojan',
+               hysteria2: 'Hysteria2' }[protocol] || protocol.toUpperCase();
+    }
+
     function renderSubscriptions(list) {
       const container = $('subs');
       const picker = $('sub-protocol-filter');
@@ -325,8 +330,7 @@ enum WebUIPage {
       const protocols = [...new Set(list.flatMap((sub) => sub.protocols || []))].sort();
       picker.replaceChildren(element('option', null, '全部协议'),
         ...protocols.map((protocol) => {
-          const option = element('option', null, protocol === 'ss' ? 'SS' :
-            protocol === 'vmess' ? 'VMess' : protocol === 'vless' ? 'VLESS' : 'Trojan');
+          const option = element('option', null, protocolText(protocol));
           option.value = protocol;
           return option;
         }));
@@ -355,7 +359,7 @@ enum WebUIPage {
         const meta = [sub.statusLabel, sub.nodeCount + ' 个节点', relative(sub.updatedAt),
                       '每 ' + sub.updateIntervalHours + ' 小时'];
         if (sub.protocols && sub.protocols.length) meta.splice(2, 0,
-          sub.protocols.map((p) => p === 'ss' ? 'SS' : p === 'vmess' ? 'VMess' : p === 'vless' ? 'VLESS' : 'Trojan').join('/'));
+          sub.protocols.map(protocolText).join('/'));
         if (sub.note) meta.push(sub.note);
         if (sub.lastError) meta.push(sub.lastError);
         left.append(element('div', 'dim', meta.join(' · ')));

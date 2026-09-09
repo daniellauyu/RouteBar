@@ -22,6 +22,7 @@ public enum SubscriptionParser {
     private nonisolated static func containsSupportedURI(_ text: String) -> Bool {
         let lower = text.lowercased()
         return ProxyProtocol.allCases.contains { lower.contains("\($0.rawValue)://") }
+            || lower.contains("hy2://")
     }
 
     private nonisolated static func parseURI(_ line: String, sourceID: UUID) -> ProxyNode? {
@@ -32,6 +33,7 @@ public enum SubscriptionParser {
         case ProxyProtocol.shadowsocks.rawValue: parseShadowsocks(trimmed, sourceID: sourceID)
         case ProxyProtocol.trojan.rawValue: parseTrojan(trimmed, sourceID: sourceID)
         case ProxyProtocol.vmess.rawValue: parseVMess(trimmed, sourceID: sourceID)
+        case ProxyProtocol.hysteria2.rawValue, "hy2": parseHysteria2(trimmed, sourceID: sourceID)
         default: nil
         }
     }
@@ -147,6 +149,34 @@ public enum SubscriptionParser {
             tlsEnabled: tlsValue == "tls", allowInsecure: boolean(string(object["allowInsecure"])),
             flow: "", serverName: sni, publicKey: "", shortID: "",
             fingerprint: string(object["fp"]) ?? "chrome", sourceIDs: [sourceID], isEnabled: true)
+    }
+
+    private nonisolated static func parseHysteria2(_ uri: String, sourceID: UUID) -> ProxyNode? {
+        guard let components = URLComponents(string: uri),
+              let server = components.host, let port = components.port,
+              let user = components.user?.removingPercentEncoding, !user.isEmpty else { return nil }
+        let password: String
+        if let suffix = components.password?.removingPercentEncoding, !suffix.isEmpty {
+            password = "\(user):\(suffix)"
+        } else {
+            password = user
+        }
+        let values = queryValues(components)
+        let obfuscation = values["obfs", default: ""]
+        let obfuscationPassword = values["obfs-password", default: values["obfsPassword", default: ""]]
+        let identity = identityString(.hysteria2, server, port, [password,
+                                                                 values["sni", default: ""],
+                                                                 obfuscation, obfuscationPassword])
+        return ProxyNode(
+            id: digest(identity), name: displayName(components, fallback: server), server: server,
+            serverPort: port, protocolType: .hysteria2, uuid: "", password: password,
+            tlsEnabled: true,
+            allowInsecure: boolean(values["insecure"] ?? values["allowInsecure"]),
+            obfuscation: obfuscation, obfuscationPassword: obfuscationPassword,
+            upMbps: Int(values["upmbps", default: values["up_mbps", default: ""]]) ?? 0,
+            downMbps: Int(values["downmbps", default: values["down_mbps", default: ""]]) ?? 0,
+            flow: "", serverName: values["sni", default: server], publicKey: "", shortID: "",
+            fingerprint: "", sourceIDs: [sourceID], isEnabled: true)
     }
 
     private nonisolated static func queryValues(_ components: URLComponents) -> [String: String] {

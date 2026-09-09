@@ -134,6 +134,13 @@ public enum ConfigurationGenerator {
             result["password"] = node.password
             if !node.plugin.isEmpty { result["plugin"] = node.plugin }
             if !node.pluginOptions.isEmpty { result["plugin_opts"] = node.pluginOptions }
+        case .hysteria2:
+            result["password"] = node.password
+            if node.upMbps > 0 { result["up_mbps"] = node.upMbps }
+            if node.downMbps > 0 { result["down_mbps"] = node.downMbps }
+            if !node.obfuscation.isEmpty {
+                result["obfs"] = ["type": node.obfuscation, "password": node.obfuscationPassword]
+            }
         }
 
         if node.protocolType != .shadowsocks, node.tlsEnabled {
@@ -148,7 +155,8 @@ public enum ConfigurationGenerator {
             result["tls"] = tls
         }
 
-        if node.protocolType != .shadowsocks, let transport = transport(for: node) {
+        if node.protocolType != .shadowsocks && node.protocolType != .hysteria2,
+           let transport = transport(for: node) {
             result["transport"] = transport
         }
         return result

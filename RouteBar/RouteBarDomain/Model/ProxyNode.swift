@@ -5,6 +5,7 @@ public enum ProxyProtocol: String, Codable, CaseIterable, Identifiable, Sendable
     case shadowsocks = "ss"
     case trojan
     case vmess
+    case hysteria2
 
     public nonisolated var id: String { rawValue }
 
@@ -14,6 +15,7 @@ public enum ProxyProtocol: String, Codable, CaseIterable, Identifiable, Sendable
         case .shadowsocks: "SS"
         case .trojan: "Trojan"
         case .vmess: "VMess"
+        case .hysteria2: "Hysteria2"
         }
     }
 }
@@ -42,6 +44,10 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
     public var allowInsecure: Bool
     public var plugin: String
     public var pluginOptions: String
+    public var obfuscation: String
+    public var obfuscationPassword: String
+    public var upMbps: Int
+    public var downMbps: Int
     public var flow: String
     public var serverName: String
     public var publicKey: String
@@ -59,6 +65,8 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
                             transportHost: String = "", path: String = "", serviceName: String = "",
                             tlsEnabled: Bool = false, allowInsecure: Bool = false,
                             plugin: String = "", pluginOptions: String = "",
+                            obfuscation: String = "", obfuscationPassword: String = "",
+                            upMbps: Int = 0, downMbps: Int = 0,
                             flow: String, serverName: String, publicKey: String, shortID: String,
                             fingerprint: String, sourceIDs: [UUID], isEnabled: Bool, latency: LatencyRecord? = nil) {
         self.id = id
@@ -79,6 +87,10 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
         self.allowInsecure = allowInsecure
         self.plugin = plugin
         self.pluginOptions = pluginOptions
+        self.obfuscation = obfuscation
+        self.obfuscationPassword = obfuscationPassword
+        self.upMbps = upMbps
+        self.downMbps = downMbps
         self.flow = flow
         self.serverName = serverName
         self.publicKey = publicKey
@@ -100,6 +112,7 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, name, server, serverPort, protocolType, uuid, password, method, alterID, security
         case transport, transportHost, path, serviceName, tlsEnabled, allowInsecure, plugin, pluginOptions
+        case obfuscation, obfuscationPassword, upMbps, downMbps
         case flow, serverName, publicKey, shortID, fingerprint, sourceIDs, isEnabled, latency
     }
 
@@ -125,6 +138,10 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
         allowInsecure = try container.decodeIfPresent(Bool.self, forKey: .allowInsecure) ?? false
         plugin = try container.decodeIfPresent(String.self, forKey: .plugin) ?? ""
         pluginOptions = try container.decodeIfPresent(String.self, forKey: .pluginOptions) ?? ""
+        obfuscation = try container.decodeIfPresent(String.self, forKey: .obfuscation) ?? ""
+        obfuscationPassword = try container.decodeIfPresent(String.self, forKey: .obfuscationPassword) ?? ""
+        upMbps = try container.decodeIfPresent(Int.self, forKey: .upMbps) ?? 0
+        downMbps = try container.decodeIfPresent(Int.self, forKey: .downMbps) ?? 0
         flow = try container.decodeIfPresent(String.self, forKey: .flow) ?? ""
         serverName = try container.decodeIfPresent(String.self, forKey: .serverName) ?? server
         publicKey = try container.decodeIfPresent(String.self, forKey: .publicKey) ?? ""

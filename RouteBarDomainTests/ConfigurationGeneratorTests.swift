@@ -35,6 +35,7 @@ struct ConfigurationGeneratorTests {
             "ss://\(credentials)@ss.example.com:8388#SS",
             "trojan://secret@trojan.example.com:443?security=tls&sni=trojan.example.com#Trojan",
             "vmess://\(vmess)",
+            "hysteria2://secret@hy2.example.com:443?sni=hy2.example.com&insecure=1#Hysteria2",
         ].joined(separator: "\n")
         let nodes = try SubscriptionParser.parseSubscription(Data(body.utf8), sourceID: source)
         let result = try ConfigurationGenerator.generate(nodes: nodes)
@@ -42,7 +43,7 @@ struct ConfigurationGeneratorTests {
         let outbounds = try #require(object["outbounds"] as? [[String: Any]])
         let types = Set(outbounds.compactMap { $0["type"] as? String })
 
-        #expect(types == ["vless", "shadowsocks", "trojan", "vmess"])
+        #expect(types == ["vless", "shadowsocks", "trojan", "vmess", "hysteria2"])
         #expect(outbounds.first { $0["type"] as? String == "shadowsocks" }?["method"] as? String == "aes-256-gcm")
         #expect(outbounds.first { $0["type"] as? String == "trojan" }?["password"] as? String == "secret")
         #expect((outbounds.first { $0["type"] as? String == "vmess" }?["transport"] as? [String: Any])?["type"] as? String == "ws")

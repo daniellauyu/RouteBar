@@ -243,7 +243,11 @@ public actor SubscriptionCoordinator {
             subscriptions[current].status = .success
             subscriptions[current].lastError = nil
             try? persist()
-            return outcome([.init(.notice, "订阅", "「\(name)」更新成功，解析到 \(parsed.count) 个节点")])
+            let protocolSummary = ProxyProtocol.allCases.compactMap { type in
+                let count = parsed.count { $0.protocolType == type }
+                return count > 0 ? "\(type.label) \(count)" : nil
+            }.joined(separator: " · ")
+            return outcome([.init(.notice, "订阅", "「\(name)」更新成功，解析到 \(parsed.count) 个节点（\(protocolSummary)）")])
         } catch {
             guard let current = subscriptions.firstIndex(where: { $0.id == id }) else { return outcome() }
             subscriptions[current].status = .failed
@@ -520,6 +524,6 @@ public actor SubscriptionCoordinator {
 
     enum SubscriptionError: LocalizedError {
         case empty
-        var errorDescription: String? { "订阅中没有可用的 VLESS、SS、Trojan 或 VMess 节点" }
+        var errorDescription: String? { "订阅中没有可用的 VLESS、SS、Trojan、VMess 或 Hysteria2 节点" }
     }
 }

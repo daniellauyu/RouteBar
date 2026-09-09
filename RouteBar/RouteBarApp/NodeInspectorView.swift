@@ -55,6 +55,16 @@ struct NodeInspectorView: View {
                                     InfoRow("插件", node.plugin)
                                 }
                             }
+                        } else if node.protocolType == .hysteria2 {
+                            InfoCard("连接参数") {
+                                InfoRow("传输", "QUIC")
+                                Divider()
+                                InfoRow("TLS SNI", node.serverName)
+                                if !node.obfuscation.isEmpty {
+                                    Divider()
+                                    InfoRow("混淆", node.obfuscation)
+                                }
+                            }
                         } else {
                             InfoCard("连接参数") {
                                 InfoRow("传输", node.transport.uppercased())

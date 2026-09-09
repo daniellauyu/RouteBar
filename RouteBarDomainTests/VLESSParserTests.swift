@@ -55,13 +55,14 @@ struct VLESSParserTests {
             "ss://\(credentials)@ss.example.com:8388#东京%20SS",
             "trojan://p%40ss@trojan.example.com:443?security=tls&sni=example.com&type=grpc&serviceName=edge#美国%20Trojan",
             "vmess://\(vmessData.base64EncodedString())",
+            "hysteria2://secret@hy2.example.com:443?sni=edge.example.com&insecure=1#香港%20HY2",
         ].joined(separator: "\n")
 
         let plain = try SubscriptionParser.parseSubscription(Data(mixed.utf8), sourceID: sourceID)
         let encoded = try SubscriptionParser.parseSubscription(
             Data(Data(mixed.utf8).base64EncodedString().utf8), sourceID: sourceID)
 
-        #expect(plain.count == 4)
+        #expect(plain.count == 5)
         #expect(Set(plain.map(\.protocolType)) == Set(ProxyProtocol.allCases))
         #expect(encoded.map(\.id) == plain.map(\.id))
         #expect(plain.first { $0.protocolType == .shadowsocks }?.method == "aes-128-gcm")
@@ -80,6 +81,22 @@ struct VLESSParserTests {
         #expect(node.protocolType == .vless)
         #expect(node.tlsEnabled)
         #expect(node.protocolLabel == "VLESS-Reality")
+    }
+
+    /// 真实订阅会把 Hysteria2 与 VLESS 混在同一份 base64 URI 列表中；不能静默丢掉前者。
+    @Test func keepsHysteria2URIFromSubscription() throws {
+        let uri = "hysteria2://secret@hy2.example.com:443?sni=edge.example.com&insecure=1#香港%20HY2"
+        let nodes = try SubscriptionParser.parseSubscription(Data(uri.utf8), sourceID: sourceID)
+
+        #expect(nodes.count == 1)
+        #expect(nodes.first?.protocolLabel == "Hysteria2")
+        #expect(nodes.first?.name == "香港 HY2")
+        let generated = try ConfigurationGenerator.generate(nodes: nodes)
+        let document = try #require(JSONSerialization.jsonObject(with: generated.singBoxJSON) as? [String: Any])
+        let outbound = try #require((document["outbounds"] as? [[String: Any]])?.first)
+        #expect(outbound["type"] as? String == "hysteria2")
+        #expect(outbound["password"] as? String == "secret")
+        #expect((outbound["tls"] as? [String: Any])?["insecure"] as? Bool == true)
     }
 }
 
