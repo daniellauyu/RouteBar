@@ -32,14 +32,11 @@ public struct APISnapshot: nonisolated Codable, Sendable {
         counts = APICounts(state: state)
         subscriptions = state.subscriptions.map(APISubscription.init)
         // 端口来自快照里现算的映射，和即将写进 sing-box 配置的编号同源。
-        let ports = Dictionary(state.mappedNodes.map { ($0.node.id, $0.localPort) },
-                               uniquingKeysWith: { first, _ in first })
-        let sourceNames = Dictionary(state.subscriptions.map { ($0.id, $0.name) },
-                                     uniquingKeysWith: { first, _ in first })
         // 输出名同样整批算一次：逐个节点现算的话，名字里的序号和重名补号都算不对。
         let outputNames = state.nodeNaming.namesByNodeID(for: state.mappedNodes)
-        nodes = state.mergedNodes.map {
-            APINode(node: $0, localPort: ports[$0.id], outputName: outputNames[$0.id], sourceNames: sourceNames)
+        nodes = state.displayedNodes.map {
+            APINode(item: $0, localPort: $0.localPort,
+                    outputName: $0.effectiveEnabled ? outputNames[$0.node.id] : nil)
         }
         output = APIOutput(settings: state.settings, serving: subscriptionServing, error: subscriptionError)
         naming = APINaming(state: state)
@@ -69,6 +66,7 @@ public struct APICounts: nonisolated Codable, Sendable {
     public var failedSubscriptions: Int
     public var nodes: Int
     public var enabledNodes: Int
+    public var configuredNodes: Int
     public var rawNodes: Int
     public var deduplicated: Int
     public var tested: Int
@@ -78,8 +76,9 @@ public struct APICounts: nonisolated Codable, Sendable {
         subscriptions = state.subscriptions.count
         enabledSubscriptions = state.enabledSubscriptionCount
         failedSubscriptions = state.failedSubscriptionCount
-        nodes = state.mergedNodes.count
-        enabledNodes = state.enabledNodes.count
+        nodes = state.displayedNodes.count
+        enabledNodes = state.displayedNodes.lazy.filter(\.effectiveEnabled).count
+        configuredNodes = state.mappedNodes.count
         rawNodes = state.rawNodeCount
         deduplicated = state.deduplicatedCount
         tested = state.testedNodeCount
@@ -121,12 +120,16 @@ public struct APISubscription: nonisolated Codable, Sendable {
 
 public struct APINode: nonisolated Codable, Sendable {
     public var id: String
+    /// 相同连接参数共享的出口指纹；`id` 则唯一标识订阅中的这一条记录。
+    public var endpointID: String
     public var name: String
     /// 只给出主机名，不给 VLESS 凭据。
     public var server: String
     /// 上游协议（与 RouteBar 在本机暴露的 SOCKS5 相区别）。
     public var protocolLabel: String
     public var enabled: Bool
+    public var subscriptionEnabled: Bool
+    public var effectiveEnabled: Bool
     /// 未启用的节点没有本地端口。
     public var localPort: Int?
     /// 由命名模板拼出来的节点名。未启用的节点不输出，因此为空。
@@ -139,12 +142,16 @@ public struct APINode: nonisolated Codable, Sendable {
     public var measuredAt: Date?
     public var sources: [String]
 
-    public nonisolated init(node: ProxyNode, localPort: Int?, outputName: String?, sourceNames: [UUID: String]) {
-        id = node.id
+    public nonisolated init(item: DisplayedNode, localPort: Int?, outputName: String?) {
+        let node = item.node
+        id = item.id
+        endpointID = node.id
         name = node.name
         server = node.server
         protocolLabel = node.protocolLabel
         enabled = node.isEnabled
+        subscriptionEnabled = item.subscriptionEnabled
+        effectiveEnabled = item.effectiveEnabled
         self.localPort = localPort
         self.outputName = outputName
         latencyMilliseconds = node.latency?.milliseconds
@@ -158,7 +165,7 @@ public struct APINode: nonisolated Codable, Sendable {
         case .slow: "slow"
         }
         measuredAt = node.latency?.measuredAt
-        sources = node.sourceIDs.compactMap { sourceNames[$0] }
+        sources = [item.sourceName]
     }
 }
 

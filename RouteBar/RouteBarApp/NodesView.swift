@@ -68,7 +68,7 @@ struct NodesView: View {
             filterBar
             Divider()
 
-            if model.mergedNodes.isEmpty {
+            if model.displayedNodes.isEmpty {
                 ContentUnavailableView("还没有节点", systemImage: "point.3.connected.trianglepath.dotted",
                                        description: Text("先在「订阅」页添加并更新一个订阅。"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -76,10 +76,9 @@ struct NodesView: View {
                 List(selection: $model.selectedNodeID) {
                     ForEach(filteredNodes) { item in
                         NodeRow(item: item,
-                                number: nodeNumbers[item.node.id],
-                                source: sourceName(for: item.node),
-                                outputName: outputNames[item.node.id])
-                            .tag(Optional(item.node.id))
+                                number: nodeNumbers[item.id],
+                                outputName: item.effectiveEnabled ? outputNames[item.node.id] : nil)
+                            .tag(Optional(item.id))
                     }
                 }
                 .overlay {
@@ -165,7 +164,7 @@ struct NodesView: View {
 
     private var statusBar: some View {
         HStack {
-            Text("显示 \(filteredNodes.count) / \(model.mappedNodes.count) 个启用节点")
+            Text("显示 \(filteredNodes.count) / \(model.displayedNodes.count) 个订阅节点 · \(model.mappedNodes.count) 个启用出口")
             Spacer()
             if !model.testingNodeIDs.isEmpty {
                 ProgressView().controlSize(.small)
@@ -183,15 +182,12 @@ struct NodesView: View {
 
     // MARK: - 序号
 
-    /// 节点编号：在**完整节点列表**（去重后按名称排序）里的位置。
+    /// 节点编号：在订阅的完整原始条目列表里的位置。
     ///
     /// 不用列表行号，因为这一页可以改排序和筛选——行号会随之变化，说「第 5 个」就没有意义了。
-    /// 按完整列表定位则三处一致：窗口、网页、`routebar test 5` 指的是同一个节点。
-    ///
-    /// 这一页只列启用节点（`mappedNodes` 已过滤），所以有节点被停用时编号会跳号——
-    /// 那是对的，编号属于节点，不属于它此刻排第几行。
+    /// 按完整列表定位则筛选和排序不会改变编号，关闭节点也仍保留原编号。
     private var nodeNumbers: [String: Int] {
-        Dictionary(uniqueKeysWithValues: model.mergedNodes.enumerated().map { ($0.element.id, $0.offset + 1) })
+        Dictionary(uniqueKeysWithValues: model.displayedNodes.enumerated().map { ($0.element.id, $0.offset + 1) })
     }
 
     /// 节点 id → 生成的节点名（两种 Surge 接法都用它，机场原名不参与）。
@@ -205,17 +201,17 @@ struct NodesView: View {
     // MARK: - 筛选
 
     private var regions: [String] {
-        [Self.allRegions] + Set(model.mappedNodes.map { inferredRegion($0.node.name) }).sorted()
+        [Self.allRegions] + Set(model.displayedNodes.map { inferredRegion($0.node.name) }).sorted()
     }
 
-    private var filteredNodes: [PortMappedNode] {
-        model.mappedNodes.filter { item in
+    private var filteredNodes: [DisplayedNode] {
+        model.displayedNodes.filter { item in
             let node = item.node
             let search = model.nodeSearchText
             let matchesSearch = search.isEmpty
                 || node.name.localizedCaseInsensitiveContains(search)
                 || node.server.localizedCaseInsensitiveContains(search)
-            let matchesSource = sourceID.map { node.sourceIDs.contains($0) } ?? true
+            let matchesSource = sourceID.map { item.sourceID == $0 } ?? true
             let matchesProtocol = protocolType.map { node.protocolType == $0 } ?? true
             let matchesRegion = region == Self.allRegions || inferredRegion(node.name) == region
             return matchesSearch && matchesSource && matchesProtocol && matchesRegion && matchesLatency(node)
@@ -225,7 +221,7 @@ struct NodesView: View {
             case .name:
                 lhs.node.name.localizedStandardCompare(rhs.node.name) == .orderedAscending
             case .source:
-                sourceName(for: lhs.node).localizedStandardCompare(sourceName(for: rhs.node)) == .orderedAscending
+                lhs.sourceName.localizedStandardCompare(rhs.sourceName) == .orderedAscending
             case .latency:
                 // 未测速的排最后，否则它们会以 0 ms 霸占榜首。
                 (lhs.node.latency?.milliseconds ?? Int.max) < (rhs.node.latency?.milliseconds ?? Int.max)
@@ -244,17 +240,13 @@ struct NodesView: View {
         }
     }
 
-    private func sourceName(for node: ProxyNode) -> String {
-        model.sourceNames(for: node).first ?? "未知"
-    }
 }
 
 /// 节点列表行。
 private struct NodeRow: View {
     @EnvironmentObject private var model: AppModel
-    let item: PortMappedNode
+    let item: DisplayedNode
     let number: Int?
-    let source: String
     /// 由命名模板拼出来的节点名。与上面那行机场给的原名并列显示——
     /// 命名模板可配置之后，两者可以完全不一样，在策略组里找不到某个节点时要对的是这个。
     let outputName: String?
@@ -268,7 +260,7 @@ private struct NodeRow: View {
 
             Toggle("", isOn: Binding(
                 get: { item.node.isEnabled },
-                set: { model.setNodeEnabled($0, id: item.node.id) }
+                set: { model.setNodeEnabled($0, id: item.id) }
             ))
             .labelsHidden()
             .toggleStyle(.switch)
@@ -305,6 +297,7 @@ private struct NodeRow: View {
             }
         }
         .padding(.vertical, 5)
+        .opacity(item.effectiveEnabled ? 1 : 0.58)
     }
 
     /// 用 String 拼好再交给 Text。
@@ -312,6 +305,16 @@ private struct NodeRow: View {
     /// `Text("端口 \(int)")` 走的是 SwiftUI 的本地化插值，会给整数加千位分隔符——
     /// 端口 7737 显示成「7,737」，看着像个金额。
     private var subtitle: String {
-        "\(item.node.protocolLabel) · \(source) · 端口 \(item.localPort) · \(item.node.server)"
+        let state: String
+        if !item.subscriptionEnabled {
+            state = "订阅已停用"
+        } else if !item.node.isEnabled {
+            state = "已关闭"
+        } else if let port = item.localPort {
+            state = "端口 \(port)"
+        } else {
+            state = "等待配置"
+        }
+        return "\(item.node.protocolLabel) · \(item.sourceName) · \(state) · \(item.node.server)"
     }
 }

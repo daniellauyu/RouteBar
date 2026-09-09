@@ -152,15 +152,15 @@ def print_status(data):
     print(line)
 
     counts = data["counts"]
-    print(f"  节点 {bold(counts['enabledNodes'])}/{counts['nodes']} 启用"
-          f" · 去重 {counts['deduplicated']}"
+    print(f"  节点条目 {bold(counts['enabledNodes'])}/{counts['nodes']} 启用"
+          f" · 唯一出口 {counts['configuredNodes']}"
+          f" · 重复出口 {counts['deduplicated']}"
           f" · 已测速 {counts['tested']}"
           f" · 测速失败 {counts['failedLatency']}")
 
     output = data["output"]
-    if output["servesSubscription"]:
-        health = green("服务中") if output["serving"] else red(output.get("error") or "未启动")
-        print(f"  订阅 {output['subscriptionURL']}  {health}")
+    health = green("服务中") if output["serving"] else red(output.get("error") or "未启动")
+    print(f"  订阅 {output['subscriptionURL']}  {health}")
 
     for message in data["health"]:
         print(f"  {yellow('⚠')} {message}")
@@ -188,18 +188,20 @@ def print_nodes(data, keyword=None):
     output_width = max(display_width(n.get("outputName") or "—") for _, n in nodes)
     latency_width = max(display_width(latency_plain(n)) for _, n in nodes)
     for index, node in nodes:
-        flag = " " if node["enabled"] else dim("×")
+        effective = node.get("effectiveEnabled", node["enabled"])
+        flag = " " if effective else dim("×")
         # 用 .get()：值为 null 的可选字段会被 JSONEncoder 整个省略，未启用的节点
         # 压根没有 localPort 这个键，下标取会直接 KeyError。
         port = str(node["localPort"]).rjust(5) if node.get("localPort") else "    —"
-        name = node["name"] if node["enabled"] else dim(node["name"])
+        name = node["name"] if effective else dim(node["name"])
         padding = " " * max(0, width - display_width(node["name"]))
         output = node.get("outputName") or "—"
         output_padding = " " * max(0, output_width - display_width(output))
         print(f"{dim(f'{index:>3}')} {flag} {name}{padding}"
               f"  {dim('→')} {output}{output_padding}"
               f"  {dim(port)}  {latency_cell(node, latency_width)}"
-              f"  {dim(node['protocolLabel'])}  {dim(node['server'])}")
+              f"  {dim(node['protocolLabel'])}  {dim((node.get('sources') or ['未知来源'])[0])}"
+              f"  {dim(node['server'])}")
 
 
 def print_subscriptions(data):

@@ -26,6 +26,9 @@ public enum ProxyProtocol: String, Codable, CaseIterable, Identifiable, Sendable
 /// （见 `SubscriptionParser`）。机场经常换节点名、换排序，只有连接参数才是同一个节点的身份；
 /// 用指纹做主键，多个订阅里的同一节点才能被识别成一个，刷新订阅后启用状态和测速结果也才跟得住。
 public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
+    /// 订阅中的原始条目身份。与 `id`（连接指纹）分开，允许同一出口在一个或多个订阅中
+    /// 出现多次，并让每一条记录都能独立显示和开关。
+    public var entryID: String
     public var id: String
     public var name: String
     public var server: String
@@ -58,7 +61,7 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
     public var isEnabled: Bool
     public var latency: LatencyRecord?
 
-    public nonisolated init(id: String, name: String, server: String, serverPort: Int,
+    public nonisolated init(id: String, entryID: String = "", name: String, server: String, serverPort: Int,
                             protocolType: ProxyProtocol = .vless, uuid: String,
                             password: String = "", method: String = "", alterID: Int = 0,
                             security: String = "auto", transport: String = "tcp",
@@ -70,6 +73,7 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
                             flow: String, serverName: String, publicKey: String, shortID: String,
                             fingerprint: String, sourceIDs: [UUID], isEnabled: Bool, latency: LatencyRecord? = nil) {
         self.id = id
+        self.entryID = entryID.isEmpty ? id : entryID
         self.name = name
         self.server = server
         self.serverPort = serverPort
@@ -110,7 +114,7 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, server, serverPort, protocolType, uuid, password, method, alterID, security
+        case entryID, id, name, server, serverPort, protocolType, uuid, password, method, alterID, security
         case transport, transportHost, path, serviceName, tlsEnabled, allowInsecure, plugin, pluginOptions
         case obfuscation, obfuscationPassword, upMbps, downMbps
         case flow, serverName, publicKey, shortID, fingerprint, sourceIDs, isEnabled, latency
@@ -120,6 +124,7 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
+        entryID = try container.decodeIfPresent(String.self, forKey: .entryID) ?? id
         name = try container.decode(String.self, forKey: .name)
         server = try container.decode(String.self, forKey: .server)
         serverPort = try container.decode(Int.self, forKey: .serverPort)
@@ -155,6 +160,20 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
 
 /// 节点合并与状态承接。
 public enum NodeCatalog {
+    /// 为订阅中的每条原始记录补上稳定身份。旧状态里的 entryID 等于连接指纹，加载时也会迁移。
+    public nonisolated static func assignEntryIDs(_ nodes: [ProxyNode], sourceID: UUID) -> [ProxyNode] {
+        var occurrences: [String: Int] = [:]
+        return nodes.map { node in
+            var node = node
+            let occurrence = occurrences[node.id, default: 0]
+            occurrences[node.id] = occurrence + 1
+            if node.entryID == node.id {
+                node.entryID = "\(sourceID.uuidString.lowercased())|\(node.id)|\(occurrence)"
+            }
+            return node
+        }
+    }
+
     /// 按指纹去重，合并来源并保留任一来源的启用状态。
     public nonisolated static func merge(_ nodes: [ProxyNode]) -> [ProxyNode] {
         var merged: [String: ProxyNode] = [:]
@@ -179,10 +198,12 @@ public enum NodeCatalog {
     /// 订阅刷新会整份替换节点列表；不搬运的话，用户手动禁用的节点会在每次自动更新后
     /// 悄悄复活，测速结果也会全部清零。
     public nonisolated static func carryPersistedState(from previous: [ProxyNode], to refreshed: [ProxyNode]) -> [ProxyNode] {
+        let oldByEntryID = Dictionary(previous.map { ($0.entryID, $0) }, uniquingKeysWith: { first, _ in first })
         let oldByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return refreshed.map { node in
             var node = node
-            if let old = oldByID[node.id] {
+            // entryID 在同一订阅的刷新之间稳定。按连接指纹回退仅用于迁移旧版 state.json。
+            if let old = oldByEntryID[node.entryID] ?? oldByID[node.id] {
                 node.isEnabled = old.isEnabled
                 node.latency = old.latency
             }

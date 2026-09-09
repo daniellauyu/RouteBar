@@ -31,6 +31,17 @@ struct VLESSParserTests {
         #expect(merged[0].sourceIDs == [sourceID, secondSource])
     }
 
+    @Test func parserPreservesDuplicateSubscriptionEntriesForDisplay() throws {
+        let renamed = uri.replacingOccurrences(of: "香港%2001", with: "同出口的另一个名称")
+        let nodes = try SubscriptionParser.parseSubscription(
+            Data("\(uri)\n\(renamed)".utf8), sourceID: sourceID)
+
+        #expect(nodes.count == 2)
+        #expect(Set(nodes.map(\.id)).count == 1)
+        #expect(Set(nodes.map(\.entryID)).count == 2)
+        #expect(Set(nodes.map(\.name)) == ["香港 01", "同出口的另一个名称"])
+    }
+
     @Test func refreshCarriesForwardEnablementAndLatencyForStableNodes() throws {
         var old = try VLESSParser.parseSubscription(Data(uri.utf8), sourceID: sourceID)[0]
         old.isEnabled = false
@@ -39,6 +50,18 @@ struct VLESSParserTests {
         let carried = NodeCatalog.carryPersistedState(from: [old], to: refreshed)
         #expect(carried[0].isEnabled == false)
         #expect(carried[0].latency?.milliseconds == 76)
+    }
+
+    @Test func refreshCarriesStateForEachDuplicateEntryIndependently() throws {
+        let renamed = uri.replacingOccurrences(of: "香港%2001", with: "同出口的另一个名称")
+        let data = Data("\(uri)\n\(renamed)".utf8)
+        var previous = try SubscriptionParser.parseSubscription(data, sourceID: sourceID)
+        previous[0].isEnabled = false
+
+        let refreshed = try SubscriptionParser.parseSubscription(data, sourceID: sourceID)
+        let carried = NodeCatalog.carryPersistedState(from: previous, to: refreshed)
+
+        #expect(carried.map(\.isEnabled) == [false, true])
     }
 
     @Test func keepsMixedProtocolNodesFromPlainAndBase64Subscriptions() throws {
@@ -162,6 +185,9 @@ struct SchedulingTests {
         #expect(state.enabledSubscriptionCount == 2)
         // 被禁用订阅里的节点不计入合并结果，但仍算进「原始节点数」。
         #expect(state.rawNodeCount == 3)
+        #expect(state.displayedNodes.count == 3)
+        #expect(state.displayedNodes.contains { !$0.node.isEnabled })
+        #expect(state.displayedNodes.contains { !$0.subscriptionEnabled })
         #expect(state.mergedNodes.count == 2)
         #expect(state.enabledNodes.count == 1)
         #expect(state.testedNodeCount == 2)

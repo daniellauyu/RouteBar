@@ -153,9 +153,9 @@ enum WebUIPage {
           </div>
         </div>
         <div class="grid" style="margin-top:16px">
-          <div class="metric"><b id="m-nodes">–</b><span class="dim">启用节点</span></div>
-          <div class="metric"><b id="m-total">–</b><span class="dim">去重后</span></div>
-          <div class="metric"><b id="m-dedup">–</b><span class="dim">已去重</span></div>
+          <div class="metric"><b id="m-nodes">–</b><span class="dim">启用条目</span></div>
+          <div class="metric"><b id="m-total">–</b><span class="dim">全部条目</span></div>
+          <div class="metric"><b id="m-dedup">–</b><span class="dim">重复出口</span></div>
           <div class="metric"><b id="m-tested">–</b><span class="dim">已测速</span></div>
           <div class="metric"><b id="m-failed">–</b><span class="dim">测速失败</span></div>
         </div>
@@ -478,7 +478,7 @@ enum WebUIPage {
         return;
       }
       container.replaceChildren(...visible.map((node) => {
-        const item = element('div', 'item row between' + (node.enabled ? '' : ' off'));
+        const item = element('div', 'item row between' + (node.effectiveEnabled ? '' : ' off'));
         item.append(element('span', 'idx', String(order.get(node.id))));
         const left = element('div', 'grow');
         const title = element('div', 'row');
@@ -490,8 +490,10 @@ enum WebUIPage {
         left.append(title);
         const meta = element('div', 'dim');
         // 协议是上游的，本地端口是 RouteBar 造出来的壳——两者并列才说得清这一行是什么。
-        meta.textContent = node.protocolLabel + ' · ' + node.server +
-          (node.localPort ? ' · 本地 ' + node.localPort : '');
+        const state = !node.subscriptionEnabled ? '订阅已停用' : (!node.enabled ? '已关闭' :
+          (node.localPort ? '本地 ' + node.localPort : '等待配置'));
+        meta.textContent = node.protocolLabel + ' · ' + (node.sources[0] || '未知来源') +
+          ' · ' + state + ' · ' + node.server;
         left.append(meta);
 
         const right = element('div', 'row');
@@ -501,7 +503,7 @@ enum WebUIPage {
         toggle.onclick = () => act('/nodes/' + encodeURIComponent(node.id) + '/enabled', 'POST', { enabled: !node.enabled });
 
         const test = element('button', null, '测速');
-        test.disabled = !node.enabled;
+        test.disabled = !node.effectiveEnabled;
         test.onclick = () => act('/nodes/' + encodeURIComponent(node.id) + '/test', 'POST', {});
 
         right.append(test, toggle);

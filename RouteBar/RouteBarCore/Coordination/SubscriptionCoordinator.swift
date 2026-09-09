@@ -69,7 +69,11 @@ public actor SubscriptionCoordinator {
         let loadedState = stateStore.load()
         settings = loadedSettings
         runtime = RuntimeManager(settings: loadedSettings)
-        subscriptions = loadedState.subscriptions
+        subscriptions = loadedState.subscriptions.map { subscription in
+            var subscription = subscription
+            subscription.nodes = NodeCatalog.assignEntryIDs(subscription.nodes, sourceID: subscription.id)
+            return subscription
+        }
         autoUpdatePaused = loadedState.autoUpdatePaused
     }
 
@@ -194,13 +198,14 @@ public actor SubscriptionCoordinator {
         var name = id
         for subscriptionIndex in subscriptions.indices {
             for nodeIndex in subscriptions[subscriptionIndex].nodes.indices
-            where subscriptions[subscriptionIndex].nodes[nodeIndex].id == id {
+            where subscriptions[subscriptionIndex].nodes[nodeIndex].entryID == id {
                 subscriptions[subscriptionIndex].nodes[nodeIndex].isEnabled = enabled
                 name = subscriptions[subscriptionIndex].nodes[nodeIndex].name
+                try? persist()
+                return outcome([.init(.info, "节点", "\(enabled ? "启用" : "停用")节点「\(name)」")])
             }
         }
-        try? persist()
-        return outcome([.init(.info, "节点", "\(enabled ? "启用" : "停用")节点「\(name)」")])
+        return outcome([.init(.warning, "节点", "没有找到节点条目「\(name)」")])
     }
 
     // MARK: - 更新

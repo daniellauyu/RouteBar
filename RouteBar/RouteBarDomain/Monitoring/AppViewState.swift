@@ -17,6 +17,18 @@ public enum OverallStatus: String, Sendable, Equatable {
     }
 }
 
+/// 订阅中的一条原始节点记录。`node.id` 是可去重的连接指纹，`id` 是可独立操作的条目身份。
+public struct DisplayedNode: Sendable, Identifiable {
+    public let node: ProxyNode
+    public let sourceID: UUID
+    public let sourceName: String
+    public let subscriptionEnabled: Bool
+    public let localPort: Int?
+
+    public nonisolated var id: String { node.entryID }
+    public nonisolated var effectiveEnabled: Bool { subscriptionEnabled && node.isEnabled }
+}
+
 /// 统一视图状态。
 ///
 /// 菜单栏面板与主窗口读的是同一份快照，界面之间不会各算各的（原来订阅数、节点数、
@@ -30,6 +42,8 @@ public struct AppViewState: Sendable {
     public let autoUpdatePaused: Bool
     /// 上次成功生成的端口映射（节点页展示本地端口、测速都用它）。
     public let mappedNodes: [PortMappedNode]
+    /// 所有订阅中的全部原始条目，包括停用订阅、关闭节点和重复出口。
+    public let displayedNodes: [DisplayedNode]
     public let generatedAt: Date?
 
     // 快照创建时一次性计算的派生状态。界面一次刷新会读取这些字段很多次，不能每次都重新
@@ -74,7 +88,17 @@ public struct AppViewState: Sendable {
         let merged = NodeCatalog.merge(subscriptions.filter(\.isEnabled).flatMap(\.nodes))
         let enabled = merged.filter(\.isEnabled)
         let rawCount = subscriptions.reduce(0) { $0 + $1.nodes.count }
-        let deduplicated = max(0, rawCount - merged.count)
+        let allUnique = NodeCatalog.merge(subscriptions.flatMap(\.nodes))
+        let deduplicated = max(0, rawCount - allUnique.count)
+        let ports = Dictionary(mappedNodes.map { ($0.node.id, $0.localPort) },
+                               uniquingKeysWith: { first, _ in first })
+        displayedNodes = subscriptions.flatMap { subscription in
+            subscription.nodes.map { node in
+                DisplayedNode(node: node, sourceID: subscription.id, sourceName: subscription.name,
+                              subscriptionEnabled: subscription.isEnabled,
+                              localPort: subscription.isEnabled && node.isEnabled ? ports[node.id] : nil)
+            }
+        }
         let enabledSubscriptions = subscriptions.filter(\.isEnabled).count
         let failedSubscriptions = subscriptions.filter { $0.status == .failed }.count
         var messages: [String] = []

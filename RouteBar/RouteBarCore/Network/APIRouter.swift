@@ -211,7 +211,7 @@ public struct APIRouter: Sendable {
                                        host: RouteBarAPIHost) async -> HTTPResponse {
         guard method == "POST" else { return .notFound }
 
-        // 全量测速：POST /api/nodes/test。节点 id 是连接参数的 SHA256 十六进制串，
+        // 全量测速：POST /api/nodes/test。条目 id 由订阅、连接指纹和出现序号组成，
         // 不可能等于 "test"，所以这条捷径不会遮住任何单节点路由。
         if rest == ["test"] {
             await host.apiTestAllNodes()

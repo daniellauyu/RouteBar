@@ -5,7 +5,8 @@ struct NodeInspectorView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        if let node = model.selectedNode {
+        if let item = model.selectedDisplayedNode {
+            let node = item.node
             VStack(spacing: 0) {
                 topBar
                 ScrollView {
@@ -13,13 +14,13 @@ struct NodeInspectorView: View {
                         InfoCard("节点") {
                             InfoRow("名称", node.name)
                             Divider()
-                            InfoRow("来源", model.sourceNames(for: node).joined(separator: "、"))
+                            InfoRow("来源", item.sourceName)
                             Divider()
                             InfoRow("状态") {
-                                Text(node.isEnabled ? "已启用" : "已禁用")
-                                    .foregroundStyle(node.isEnabled ? .green : .secondary)
+                                Text(!item.subscriptionEnabled ? "订阅已停用" : (node.isEnabled ? "已启用" : "已关闭"))
+                                    .foregroundStyle(item.effectiveEnabled ? .green : .secondary)
                             }
-                            if let port = localPort(for: node) {
+                            if let port = item.localPort {
                                 Divider()
                                 InfoRow("本地端口", "127.0.0.1:\(port)")
                                 Divider()
@@ -89,7 +90,7 @@ struct NodeInspectorView: View {
                             }
                         }
 
-                        actions(node)
+                        actions(item)
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 24)
@@ -122,23 +123,20 @@ struct NodeInspectorView: View {
         .padding(.bottom, 14)
     }
 
-    private func actions(_ node: ProxyNode) -> some View {
-        HStack(spacing: 8) {
+    private func actions(_ item: DisplayedNode) -> some View {
+        let node = item.node
+        return HStack(spacing: 8) {
             Button("测试延迟", systemImage: "speedometer") {
                 Task { await model.testNode(node.id) }
             }
-            .disabled(model.testingNodeIDs.contains(node.id) || !node.isEnabled)
+            .disabled(model.testingNodeIDs.contains(node.id) || !item.effectiveEnabled)
             Button(node.isEnabled ? "禁用节点" : "启用节点",
                    systemImage: node.isEnabled ? "pause.circle" : "play.circle") {
-                model.setNodeEnabled(!node.isEnabled, id: node.id)
+                model.setNodeEnabled(!node.isEnabled, id: item.id)
             }
         }
         .buttonStyle(.bordered)
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func localPort(for node: ProxyNode) -> Int? {
-        model.mappedNodes.first { $0.node.id == node.id }?.localPort
     }
 
     /// 整批算再挑一个，而不是单独给这个节点拼一次：名字里的序号取自整批的位置，

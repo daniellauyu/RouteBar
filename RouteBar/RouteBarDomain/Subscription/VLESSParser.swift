@@ -14,9 +14,10 @@ public enum SubscriptionParser {
             body = ""
         }
 
-        return NodeCatalog.merge(body.components(separatedBy: .newlines).compactMap {
+        let parsed = body.components(separatedBy: .newlines).compactMap {
             parseURI($0, sourceID: sourceID)
-        })
+        }
+        return NodeCatalog.assignEntryIDs(parsed, sourceID: sourceID)
     }
 
     private nonisolated static func containsSupportedURI(_ text: String) -> Bool {

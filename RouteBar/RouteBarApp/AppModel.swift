@@ -101,7 +101,7 @@ final class AppModel: ObservableObject {
             self.selectedSubscriptionID = nil
         }
         if let selectedNodeID,
-           !outcome.state.mergedNodes.contains(where: { $0.id == selectedNodeID }) {
+           !outcome.state.displayedNodes.contains(where: { $0.id == selectedNodeID }) {
             self.selectedNodeID = nil
         }
         return errors
@@ -120,6 +120,7 @@ final class AppModel: ObservableObject {
     var subscriptions: [SubscriptionRecord] { state?.subscriptions ?? [] }
     var mergedNodes: [ProxyNode] { state?.mergedNodes ?? [] }
     var mappedNodes: [PortMappedNode] { state?.mappedNodes ?? [] }
+    var displayedNodes: [DisplayedNode] { state?.displayedNodes ?? [] }
     var serviceState: ServiceState { state?.serviceState ?? .stopped }
     var environment: RouteBarEnvironmentReport? { state?.environment }
     var settings: RouteBarSettings { state?.settings ?? RouteBarSettings.defaults() }
@@ -187,7 +188,11 @@ final class AppModel: ObservableObject {
     }
 
     var selectedNode: ProxyNode? {
-        mergedNodes.first { $0.id == selectedNodeID }
+        selectedDisplayedNode?.node
+    }
+
+    var selectedDisplayedNode: DisplayedNode? {
+        displayedNodes.first { $0.id == selectedNodeID }
     }
 
     func sourceNames(for node: ProxyNode) -> [String] {
@@ -198,7 +203,7 @@ final class AppModel: ObservableObject {
     func badge(for section: AppSection) -> Int? {
         switch section {
         case .subscriptions: subscriptions.isEmpty ? nil : subscriptions.count
-        case .nodes: mergedNodes.isEmpty ? nil : mergedNodes.count
+        case .nodes: displayedNodes.isEmpty ? nil : displayedNodes.count
         case .setup: setupChecklist.remainingRequiredCount > 0 ? setupChecklist.remainingRequiredCount : nil
         // 还没配完时不再单独标环境页：那几项缺失正是引导里的前几步，两个数字同时挂在
         // 侧栏上只会让人以为有两批不同的事要做。配完之后路径再出问题，它照常亮。
@@ -1025,7 +1030,10 @@ extension AppModel: RouteBarAPIHost {
     func apiUpdateSubscription(_ id: UUID) async { await update(id) }
     func apiUpdateAll() async { await updateAll() }
     func apiSetNodeEnabled(_ enabled: Bool, id: String) async { await applyNodeEnabled(enabled, id: id) }
-    func apiTestNode(_ id: String) async { await testNode(id) }
+    func apiTestNode(_ id: String) async {
+        guard let item = displayedNodes.first(where: { $0.id == id }), item.effectiveEnabled else { return }
+        await testNode(item.node.id)
+    }
     func apiTestAllNodes() async { await testAllNodes() }
     func apiRegenerate() async { await regenerateAsync() }
     func apiStartService() async { await startServiceAsync() }
