@@ -48,12 +48,7 @@ public enum ConfigurationGenerator {
     /// 会和真正写进配置的对不上，而这种错位极难发现。
     public nonisolated static func portMapping(nodes: [ProxyNode], startingPort: Int = 7701) -> [PortMappedNode] {
         nodes.filter(\.isEnabled)
-            .sorted {
-                let comparison = $0.name.localizedStandardCompare($1.name)
-                return comparison == .orderedSame
-                    ? $0.entryID < $1.entryID
-                    : comparison == .orderedAscending
-            }
+            .sorted(by: NodeCatalog.precedes)
             .enumerated()
             .map { PortMappedNode(node: $0.element, localPort: startingPort + $0.offset) }
     }

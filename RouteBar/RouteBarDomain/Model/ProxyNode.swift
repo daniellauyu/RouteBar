@@ -60,6 +60,9 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
     public var sourceIDs: [UUID]
     public var isEnabled: Bool
     public var latency: LatencyRecord?
+    /// 最近一次落地探测的结果：这个节点的流量出公网时用的是哪个 IP、落在哪个国家。
+    /// 与 `name` 里机场自己写的地区无关——那是宣传语，这是实测。
+    public var geo: GeoRecord?
 
     public nonisolated init(id: String, entryID: String = "", name: String, server: String, serverPort: Int,
                             protocolType: ProxyProtocol = .vless, uuid: String,
@@ -71,7 +74,8 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
                             obfuscation: String = "", obfuscationPassword: String = "",
                             upMbps: Int = 0, downMbps: Int = 0,
                             flow: String, serverName: String, publicKey: String, shortID: String,
-                            fingerprint: String, sourceIDs: [UUID], isEnabled: Bool, latency: LatencyRecord? = nil) {
+                            fingerprint: String, sourceIDs: [UUID], isEnabled: Bool,
+                            latency: LatencyRecord? = nil, geo: GeoRecord? = nil) {
         self.id = id
         self.entryID = entryID.isEmpty ? id : entryID
         self.name = name
@@ -103,6 +107,7 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
         self.sourceIDs = sourceIDs
         self.isEnabled = isEnabled
         self.latency = latency
+        self.geo = geo
     }
 
     /// 节点在**上游**用的协议，与 RouteBar 在本机暴露出的 SOCKS5 相区别。
@@ -117,7 +122,7 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
         case entryID, id, name, server, serverPort, protocolType, uuid, password, method, alterID, security
         case transport, transportHost, path, serviceName, tlsEnabled, allowInsecure, plugin, pluginOptions
         case obfuscation, obfuscationPassword, upMbps, downMbps
-        case flow, serverName, publicKey, shortID, fingerprint, sourceIDs, isEnabled, latency
+        case flow, serverName, publicKey, shortID, fingerprint, sourceIDs, isEnabled, latency, geo
     }
 
     /// 新增协议字段后仍能读取旧版本只含 VLESS Reality 字段的 state.json。
@@ -155,11 +160,27 @@ public struct ProxyNode: Codable, Hashable, Identifiable, Sendable {
         sourceIDs = try container.decodeIfPresent([UUID].self, forKey: .sourceIDs) ?? []
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         latency = try container.decodeIfPresent(LatencyRecord.self, forKey: .latency)
+        geo = try container.decodeIfPresent(GeoRecord.self, forKey: .geo)
     }
 }
 
 /// 节点合并与状态承接。
 public enum NodeCatalog {
+    /// 节点的**规范顺序**：出口端口按它分配，列表也按它编号。
+    ///
+    /// 只能有这一处定义。两边各排一遍的结果是同一行上出现三个互相矛盾的数字——
+    /// 左边的序号（按订阅分组的位置）、右边生成名里的 `{index}`、以及本地端口
+    /// （后两者按名称排）。真机上就是 76 号那一行占着 7701 端口、名字叫 `JSSR-01`。
+    ///
+    /// 按机场给的名字排而不是按订阅：一批节点里「香港01、香港02、日本01」挨在一起
+    /// 才好找，而它们来自哪条订阅是次要的（列表里有单独一列写着）。
+    /// 同名时用 `entryID` 兜底，保证顺序稳定——否则同名节点每次排出来的先后都可能不同，
+    /// 端口也就跟着变。
+    public nonisolated static func precedes(_ lhs: ProxyNode, _ rhs: ProxyNode) -> Bool {
+        let comparison = lhs.name.localizedStandardCompare(rhs.name)
+        return comparison == .orderedSame ? lhs.entryID < rhs.entryID : comparison == .orderedAscending
+    }
+
     /// 为订阅中的每条原始记录补上稳定身份。旧状态里的 entryID 等于连接指纹，加载时也会迁移。
     public nonisolated static func assignEntryIDs(_ nodes: [ProxyNode], sourceID: UUID) -> [ProxyNode] {
         var occurrences: [String: Int] = [:]
@@ -206,6 +227,9 @@ public enum NodeCatalog {
             if let old = oldByEntryID[node.entryID] ?? oldByID[node.id] {
                 node.isEnabled = old.isEnabled
                 node.latency = old.latency
+                // 落地结果同样要搬：它绑的是节点的连接参数（同一台服务器出口不会变），
+                // 不搬的话每次订阅刷新都要把 86 个节点重新探测一遍。
+                node.geo = old.geo
             }
             return node
         }

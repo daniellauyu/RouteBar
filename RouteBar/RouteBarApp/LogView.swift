@@ -22,6 +22,10 @@ struct LogView: View {
     @State private var source: LogSource?
     @State private var searchText = ""
 
+    /// 轮询间隔。够短，短到排查时不用怀疑「是没发生还是没刷新」；又不至于让一个
+    /// 空转的循环显得频繁——没有新内容时这一轮只是 seek 到文件末尾比一下大小。
+    private static let pollInterval = 3.0
+
     var body: some View {
         VStack(spacing: 0) {
             controlBar
@@ -40,6 +44,17 @@ struct LogView: View {
             }
         }
         .task { await model.refreshLogDates() }
+        // 这一页开着的时候才轮询，离开就随 task 一起取消。
+        //
+        // sing-box 的日志没有推送可言：那是 launchd 交给它的一个文件，只能自己去看
+        // 有没有变长。原先只在启动、窗口重新激活和服务操作时读一次——盯着这一页等
+        // 一条握手失败出现的人，永远等不到，得切走再切回来才看得见。
+        .task {
+            while !Task.isCancelled {
+                await model.pollSingBoxLog()
+                try? await Task.sleep(for: .seconds(Self.pollInterval))
+            }
+        }
     }
 
     // MARK: - 筛选栏

@@ -143,6 +143,79 @@ struct SchedulingTests {
         #expect(!UpdateSchedule.isDue(enabled, at: now, isPaused: true))
     }
 
+    @Test func decodesSubscriptionsWrittenBeforeTheBackoffFieldsExisted() throws {
+        // 新增的 consecutiveFailures 是非可选字段，而合成的 Codable 不会用属性默认值
+        // 补缺失键——它抛 keyNotFound，那会让整份订阅列表解不出来，被
+        // StateStore 的「解不出来就回落到空状态」静默清空。这条钉住手写的解码器。
+        let json = """
+        {"subscriptions":[{"id":"00000000-0000-0000-0000-000000000001","name":"旧订阅",\
+        "note":"","isEnabled":true,"createdAt":"2026-01-01T00:00:00Z","updateIntervalHours":6,\
+        "status":"success","nodes":[]}],"autoUpdatePaused":false}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let state = try decoder.decode(RouteBarState.self, from: Data(json.utf8))
+
+        #expect(state.subscriptions.count == 1)
+        let subscription = try #require(state.subscriptions.first)
+        #expect(subscription.name == "旧订阅")
+        #expect(subscription.consecutiveFailures == 0)
+        #expect(subscription.lastAttemptAt == nil)
+        // 没有退避记录，排期就该完全等同升级前的行为。
+        #expect(UpdateSchedule.isDue(subscription, at: now, isPaused: false))
+    }
+
+    @Test func failedSubscriptionsBackOffInsteadOfRetryingEveryTick() {
+        // 失败不推进 updatedAt（它是「这批节点有多新」），所以没有退避时这条订阅会
+        // 永远「到期」，调度器每 30 秒重拉一次。退避从 lastAttemptAt 起算。
+        var subscription = SubscriptionRecord(name: "Broken", updateIntervalHours: 6)
+        subscription.updatedAt = now.addingTimeInterval(-7 * 3600)
+        subscription.lastAttemptAt = now
+        subscription.consecutiveFailures = 1
+
+        #expect(!UpdateSchedule.isDue(subscription, at: now.addingTimeInterval(60), isPaused: false))
+        #expect(!UpdateSchedule.isDue(subscription, at: now.addingTimeInterval(4 * 60), isPaused: false))
+        #expect(UpdateSchedule.isDue(subscription, at: now.addingTimeInterval(5 * 60), isPaused: false))
+        #expect(UpdateSchedule.nextUpdate(for: subscription) == now.addingTimeInterval(5 * 60))
+    }
+
+    @Test func retryDelayClimbsThenHoldsAtTheCap() {
+        #expect(UpdateSchedule.retryDelay(afterFailures: 0) == 0)
+        #expect(UpdateSchedule.retryDelay(afterFailures: 1) == 5 * 60)
+        #expect(UpdateSchedule.retryDelay(afterFailures: 2) == 15 * 60)
+        #expect(UpdateSchedule.retryDelay(afterFailures: 3) == 60 * 60)
+        // 封顶之后不再增长，否则连着失败一天的订阅会被推到几天后才重试。
+        #expect(UpdateSchedule.retryDelay(afterFailures: 99) == 60 * 60)
+    }
+
+    @Test func neverAttemptedSubscriptionStaysDueEvenWithFailureCount() {
+        // 计数在、但没有 lastAttemptAt（旧 state.json 迁上来的），退回正常规则，
+        // 不能因为一个算不出起点的退避把订阅永远挡住。
+        var subscription = SubscriptionRecord(name: "Migrated")
+        subscription.consecutiveFailures = 2
+        #expect(UpdateSchedule.isDue(subscription, at: now, isPaused: false))
+    }
+
+    @Test func successClearsBackoffAndReturnsToTheNormalInterval() {
+        var subscription = SubscriptionRecord(name: "Recovered", updateIntervalHours: 6)
+        subscription.lastAttemptAt = now
+        subscription.updatedAt = now
+        subscription.consecutiveFailures = 0
+        #expect(UpdateSchedule.nextUpdate(for: subscription) == now.addingTimeInterval(6 * 3600))
+        #expect(!UpdateSchedule.isDue(subscription, at: now.addingTimeInterval(3600), isPaused: false))
+    }
+
+    @Test func pausedOrDisabledStillWinsOverBackoff() {
+        var subscription = SubscriptionRecord(name: "Broken")
+        subscription.lastAttemptAt = now.addingTimeInterval(-2 * 3600)
+        subscription.consecutiveFailures = 1
+        // 退避早就过了，但暂停和停用仍然一票否决。
+        #expect(UpdateSchedule.isDue(subscription, at: now, isPaused: false))
+        #expect(!UpdateSchedule.isDue(subscription, at: now, isPaused: true))
+        subscription.isEnabled = false
+        #expect(!UpdateSchedule.isDue(subscription, at: now, isPaused: false))
+    }
+
     @Test func latencyResultsBecomeStaleAfterConfiguredAge() {
         let record = LatencyRecord(outcome: .success, milliseconds: 82, measuredAt: now.addingTimeInterval(-601))
         #expect(record.isStale(at: now, maximumAge: 600))

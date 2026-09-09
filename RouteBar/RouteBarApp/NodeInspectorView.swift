@@ -90,6 +90,36 @@ struct NodeInspectorView: View {
                             }
                         }
 
+                        // 落地和上面的「服务器」不是一回事：那一行是机场给的入口地址，
+                        // 这里是流量真正出公网时的身份。中转、二级跳都会让两者对不上。
+                        InfoCard("落地") {
+                            InfoRow("结果") {
+                                if model.probingGeoIDs.contains(item.id) {
+                                    Text("探测中…")
+                                } else if let geo = node.geo, geo.outcome == .success {
+                                    Text(geo.label()).foregroundStyle(.primary)
+                                } else if node.geo != nil {
+                                    Text("探测失败").foregroundStyle(.secondary)
+                                } else {
+                                    Text("未探测").foregroundStyle(.secondary)
+                                }
+                            }
+                            if let geo = node.geo, geo.outcome == .success {
+                                Divider()
+                                InfoRow("出口 IP", geo.ip.isEmpty ? "—" : geo.ip)
+                                Divider()
+                                InfoRow("探测时间", geo.measuredAt.formatted(date: .abbreviated, time: .shortened))
+                                if landingDiffersFromName(node) {
+                                    Divider()
+                                    InfoRow("提示") {
+                                        Text("落地与节点名不符")
+                                            .foregroundStyle(.orange)
+                                            .help("机场的命名只是宣传语；落地是实测出来的")
+                                    }
+                                }
+                            }
+                        }
+
                         actions(item)
                     }
                     .padding(.horizontal, 20)
@@ -130,6 +160,10 @@ struct NodeInspectorView: View {
                 Task { await model.testNode(item.id) }
             }
             .disabled(model.testingNodeIDs.contains(item.id) || !item.effectiveEnabled)
+            Button("探测落地", systemImage: "globe") {
+                Task { await model.probeGeo(item.id) }
+            }
+            .disabled(model.probingGeoIDs.contains(item.id) || !item.effectiveEnabled)
             Button(node.isEnabled ? "禁用节点" : "启用节点",
                    systemImage: node.isEnabled ? "pause.circle" : "play.circle") {
                 model.setNodeEnabled(!node.isEnabled, id: item.id)
@@ -137,6 +171,19 @@ struct NodeInspectorView: View {
         }
         .buttonStyle(.bordered)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 落地国家和节点名对不上。
+    ///
+    /// 只做很轻的一件事：拿地区的中英文名和国家码去节点名里找。机场的命名五花八门
+    /// （「新加坡」「狮城」「SG」「Singapore」都有），所以这只是提示，两个字段
+    /// 在上面并排摆着，最终由人判断。
+    private func landingDiffersFromName(_ node: ProxyNode) -> Bool {
+        guard let geo = node.geo, geo.outcome == .success, !geo.countryCode.isEmpty else { return false }
+        let candidates = [geo.countryCode,
+                          geo.regionName(locale: Locale(identifier: "zh_CN")),
+                          geo.regionName(locale: Locale(identifier: "en_US"))].filter { !$0.isEmpty }
+        return !candidates.contains { node.name.localizedCaseInsensitiveContains($0) }
     }
 
     /// 整批算再挑一个，而不是单独给这个节点拼一次：名字里的序号取自整批的位置，

@@ -360,6 +360,35 @@ final class AppModel: ObservableObject {
         return (1...5).contains(stored) ? stored : 3
     }
 
+    // MARK: - 落地探测
+
+    /// 正在探测落地的节点，用于在列表上转圈。与测速分开，两件事可以各转各的。
+    @Published var probingGeoIDs: Set<String> = []
+
+    func probeGeoForAllNodes() async {
+        await runGeoProbe(await coordinator.mappedNodes())
+    }
+
+    func probeGeo(_ id: String) async {
+        await runGeoProbe(await coordinator.mappedNodes().filter { $0.node.entryID == id })
+    }
+
+    /// 落地探测和测速一样要经本机端口出去，所以同样要求服务在跑。
+    private func runGeoProbe(_ mapped: [PortMappedNode]) async {
+        guard !mapped.isEmpty else {
+            alertMessage = "没有可探测的启用节点。"
+            return
+        }
+        guard serviceState.isRunning else {
+            alertMessage = "sing-box 未在运行，落地探测要经过本地端口，请先启动服务。"
+            return
+        }
+        let ids = Set(mapped.map(\.node.entryID))
+        probingGeoIDs.formUnion(ids)
+        apply(await coordinator.probeGeo(mapped), alertOnError: true)
+        probingGeoIDs.subtract(ids)
+    }
+
     private func runLatencyTest(_ mapped: [PortMappedNode]) async {
         guard !mapped.isEmpty else {
             alertMessage = "没有可测试的启用节点。"
@@ -407,6 +436,18 @@ final class AppModel: ObservableObject {
         await ingestSingBoxLog()
     }
 
+    /// 日志页可见时的轮询入口：只把 sing-box 新写的行并进来。
+    ///
+    /// 不走 `refreshLogs()`：那还会把两份日志的末尾各 20 KB 读进 `singBoxLogText`，
+    /// 而那两个字段只有「服务」页在用，几秒一次地重读纯属浪费。
+    ///
+    /// 需要轮询是因为 sing-box 那半边**没有推送**：它的日志是 launchd 交给它的一个文件，
+    /// RouteBar 只能自己去看有没有变长。RouteBar 自己的记录走 `installLogArchiver`
+    /// 是实时的——两边不一致时，用户看到的是「sing-box 那半边不动了」。
+    func pollSingBoxLog() async {
+        await ingestSingBoxLog()
+    }
+
     /// sing-box 日志读到哪儿了。按字节偏移续读，见 `RuntimeManager.readNewLines`。
     ///
     /// 落盘保存（见 `LogArchiveStore.loadIngestOffset`）：只留在内存里的话每次启动都会
@@ -426,6 +467,10 @@ final class AppModel: ObservableObject {
             singBoxLogOffsetLoaded = true
         }
         let chunk = await coordinator.newSingBoxLog(since: singBoxLogOffset)
+        // 偏移没动也没有新内容，就什么都不做。日志页是几秒一轮地调这个方法的，
+        // 无条件回写偏移等于在用户盯着日志时每隔几秒写一次盘，而绝大多数轮次
+        // sing-box 一个字节都没写。
+        guard chunk.offset != singBoxLogOffset || !chunk.text.isEmpty else { return }
         singBoxLogOffset = chunk.offset
         await coordinator.saveIngestOffset(chunk.offset)
         guard !chunk.text.isEmpty else { return }
@@ -1035,6 +1080,44 @@ extension AppModel: RouteBarAPIHost {
         await testNode(item.id)
     }
     func apiTestAllNodes() async { await testAllNodes() }
+
+    func apiProbeGeoAll() async { await probeGeoForAllNodes() }
+
+    func apiProbeGeo(_ id: String) async {
+        guard let item = displayedNodes.first(where: { $0.id == id }), item.effectiveEnabled else { return }
+        await probeGeo(item.id)
+    }
+
+    /// 网络测试页：对一个目标逐节点测可达性。
+    ///
+    /// 目标地址由用户当场填，必须在这里校验协议——不校验的话，一个 `file://`
+    /// 会让 URLSession 去读本机文件，而这个接口是网页可以调的。
+    func apiProbeTargets(url: String, ids: [String]?) async throws -> APIProbeResponse {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let target = URL(string: trimmed), let scheme = target.scheme?.lowercased(),
+              scheme == "http" || scheme == "https", target.host != nil else {
+            throw APIInputError.invalidProbeURL
+        }
+        guard serviceState.isRunning else { throw APIInputError.serviceNotRunning }
+
+        let all = await coordinator.mappedNodes()
+        let wanted = ids.map(Set.init)
+        let mapped = wanted.map { set in all.filter { set.contains($0.node.entryID) } } ?? all
+        guard !mapped.isEmpty else { throw APIInputError.noNodesToProbe }
+
+        let records = await coordinator.probeTargets(mapped, url: target)
+        // 按耗时排序：这一页要回答的是「哪个节点到得了、哪个最快」，
+        // 按节点名排的话得自己在几十行里找。到不了的沉到底部。
+        let results = mapped.compactMap { item -> APIProbeResult? in
+            guard let record = records[item.node.entryID] else { return nil }
+            return APIProbeResult(id: item.node.entryID, name: item.node.name,
+                                  localPort: item.localPort, record: record, geo: item.node.geo)
+        }.sorted { lhs, rhs in
+            if lhs.ok != rhs.ok { return lhs.ok }
+            return (lhs.milliseconds ?? .max) < (rhs.milliseconds ?? .max)
+        }
+        return APIProbeResponse(url: trimmed, results: results)
+    }
     func apiRegenerate() async { await regenerateAsync() }
     func apiStartService() async { await startServiceAsync() }
     func apiStopService() async { await stopServiceAsync() }
@@ -1052,11 +1135,17 @@ extension AppModel: RouteBarAPIHost {
     enum APIInputError: LocalizedError {
         case missingURL
         case invalidURL
+        case invalidProbeURL
+        case serviceNotRunning
+        case noNodesToProbe
 
         var errorDescription: String? {
             switch self {
             case .missingURL: "缺少订阅地址"
             case .invalidURL: "订阅地址必须是 http 或 https 链接"
+            case .invalidProbeURL: "测试目标必须是带主机名的 http 或 https 地址"
+            case .serviceNotRunning: "sing-box 未在运行，测试要经过本地端口，请先启动服务"
+            case .noNodesToProbe: "没有可测试的启用节点"
             }
         }
     }

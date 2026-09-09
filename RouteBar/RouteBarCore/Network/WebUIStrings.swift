@@ -1,0 +1,251 @@
+import Foundation
+
+/// Web 界面的中英文案表。
+///
+/// **不跟随 App 的语言设置。** 界面跑在浏览器里，语言该由看页面的人当场选——
+/// Mac 是中文、想在英文环境下截图给别人看，是完全正常的组合。所以这份表整份发给页面，
+/// 切换即时生效、选择存在浏览器本地。
+///
+/// 服务端因此**不再下发写死的中文句子**：自检结论走 `APIHealthIssue` 的码，
+/// 状态走 `status`/`band`/`overall` 这些原始值，网页各自取自己的文案。
+/// 少了这一步，英文模式下会有半页中文露出来。
+enum WebUIStrings {
+    /// 吐成一段 JS 对象字面量。
+    ///
+    /// 走 JSON 序列化而不是手拼字符串：文案里出现一个引号或反斜杠就会把整个页面脚本
+    /// 弄坏，而这种错误只在切到那一条文案时才显形。
+    nonisolated static let js: String = {
+        let payload: [String: [String: String]] = ["zh": zh, "en": en]
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: payload, options: [.sortedKeys, .withoutEscapingSlashes]),
+            let text = String(data: data, encoding: .utf8) else { return "{}" }
+        return text
+    }()
+
+    nonisolated static let zh: [String: String] = [
+        "brand.sub": "本地控制台",
+        "nav.overview": "概览", "nav.nodes": "节点", "nav.subs": "订阅", "nav.nettest": "网络测试",
+
+        "pref.theme.label": "主题模式",
+        "pref.theme.auto": "自动", "pref.theme.light": "日间", "pref.theme.dark": "夜间",
+        "pref.lang.label": "界面语言",
+        "pref.lang.auto": "跟随系统", "pref.lang.zh": "中文", "pref.lang.en": "English",
+
+        "common.refresh": "刷新", "common.save": "保存", "common.cancel": "取消",
+        "common.edit": "编辑", "common.delete": "删除", "common.enable": "启用",
+        "common.disable": "停用", "common.update": "更新", "common.test": "测速",
+        "common.loading": "正在加载…",
+        "common.copied": "已复制", "common.copyFailed": "复制失败，请手动选中",
+        "common.requestFailed": "请求失败",
+
+        "overall.running": "运行正常", "overall.stopped": "服务已停止",
+        "overall.needsAttention": "需要处理", "overall.failed": "服务异常",
+
+        "status.idle": "待更新", "status.updating": "更新中", "status.success": "更新成功",
+        "status.failed": "更新失败", "status.disabled": "已禁用",
+
+        "lat.untested": "未测速", "lat.success": "可用", "lat.timeout": "超时",
+        "lat.connectionFailed": "连接失败", "lat.httpFailed": "响应异常",
+
+        "health.title": "待处理",
+        "health.noSubscriptions": "还没有订阅，先添加一个订阅地址。",
+        "health.failedSubscriptions": "{0} 个订阅最近更新失败。",
+        "health.noEnabledNodes": "当前没有启用节点，没有任何本地出口可供代理客户端使用。",
+        "health.missingSingBoxBinary": "未找到 sing-box 可执行文件，请在「环境」页确认路径。",
+        "health.missingLaunchAgent": "LaunchAgent 未找到，sing-box 可能无法由 RouteBar 管理。",
+        "health.serviceFailure": "sing-box 状态异常：{0}",
+
+        "ov.service.title": "sing-box 服务",
+        "ov.service.start": "启动", "ov.service.stop": "停止",
+        "ov.service.agent": "LaunchAgent",
+        "ov.service.hint": "RouteBar 不运行 sing-box，只写配置并通过 launchctl 指挥；退出 RouteBar 代理不会断。",
+        "ov.metric.enabled": "启用出口", "ov.metric.total": "全部条目",
+        "ov.metric.dedup": "重复连接", "ov.metric.tested": "已测速", "ov.metric.failed": "测速失败",
+        "ov.actions.update": "更新订阅", "ov.actions.regen": "重新生成",
+        "ov.test.title": "节点测试",
+        "ov.test.desc": "测速经本机端口往返，量的是整条链路；落地探测问的是流量出公网时落在哪个国家。",
+        "ov.test.all": "全部测速", "ov.test.geo": "探测全部落地",
+        "ov.output.title": "本地订阅地址",
+        "ov.output.serving": "服务中", "ov.output.stopped": "未启动",
+        "ov.output.surgeHint": "在 Surge 策略组里这样用：",
+        "ov.output.copyUrl": "复制地址", "ov.output.copyLine": "复制策略组行",
+        "ov.output.otherHint": "不用 Surge 就直接填端口：每个启用节点占一个本机端口，同端口同时收 SOCKS5 和 HTTP。",
+
+        "nd.search": "搜索节点名称或服务器",
+        "nd.allSubs": "全部订阅", "nd.allProtocols": "全部协议",
+        "nd.allRegions": "全部落地", "nd.allLatency": "全部延迟",
+        "nd.lat.fast": "快", "nd.lat.medium": "中等", "nd.lat.slow": "慢",
+        "nd.lat.failed": "不可用", "nd.lat.untested": "未测速",
+        "nd.sort.name": "按名称", "nd.sort.latency": "按延迟", "nd.sort.region": "按落地",
+        "nd.count": "{0} 个节点", "nd.countFiltered": "{0} / {1} 个节点",
+        "nd.empty": "还没有节点，先在「订阅」页添加并更新一个订阅。",
+        "nd.noMatch": "没有匹配的节点，放宽筛选条件试试。",
+        "nd.state.subDisabled": "订阅已停用", "nd.state.off": "已关闭",
+        "nd.state.waiting": "等待配置", "nd.state.port": "本地 {0}",
+        "nd.geo.probe": "测落地", "nd.geo.none": "未探测",
+        "nd.geo.failed": "落地探测失败", "nd.geo.mismatch": "落地与节点名不符",
+        "nd.outputHint": "生成的节点名，Surge 里看到的就是它",
+
+        "sb.title": "订阅", "sb.add": "添加订阅", "sb.updateAll": "更新全部",
+        "sb.name": "名称", "sb.url": "订阅地址", "sb.note": "备注",
+        "sb.interval": "更新间隔（小时）", "sb.template": "节点命名（留空跟随全局）",
+        "sb.urlPlaceholder": "订阅地址（https://…）",
+        "sb.urlKeepHint": "留空则保持当前地址不变",
+        "sb.templatePlaceholder": "留空跟随全局",
+        "sb.saveHint": "保存后会立即重新拉取这条订阅的节点。",
+        "sb.empty": "还没有订阅，在上面添加一个。",
+        "sb.noMatch": "没有包含该协议的订阅。",
+        "sb.deleteConfirm": "删除订阅「{0}」？",
+        "sb.nodes": "{0} 个节点", "sb.every": "每 {0} 小时",
+        "sb.editing": "编辑「{0}」",
+        "sb.nameRequired": "名称不能为空",
+        "sb.added": "已添加，正在拉取节点…",
+        "sb.saved": "已保存，正在重新拉取节点…",
+        "sb.never": "从未更新", "sb.justNow": "刚刚",
+        "sb.minutesAgo": "{0} 分钟前", "sb.hoursAgo": "{0} 小时前", "sb.daysAgo": "{0} 天前",
+        "sb.credentialHint": "订阅地址含机场凭据，只存钥匙串，页面从不显示它。",
+
+        "naming.title": "节点命名",
+        "naming.test": "测试", "naming.save": "保存", "naming.reset": "恢复默认",
+        "naming.help": "可用占位符：",
+        "naming.hint": "「测试」只按输入框里的模板试跑一遍，不保存。单条订阅可以在「编辑」里另设模板。",
+        "naming.sample": "当前没有启用节点，下面是示例：",
+        "naming.willBecome": "{0} 个启用节点会变成：",
+        "naming.saved": "已保存，输出的节点名已按新规则重新生成",
+
+        "nt.geo.title": "落地探测",
+        "nt.geo.desc": "经每个节点的本机端口访问 Cloudflare 的 trace 接口，看流量出公网时用的是哪个 IP、落在哪个国家。回答「哪些节点真的在新加坡」。",
+        "nt.geo.privacy": "请求经节点发出，你的真实 IP 不外泄；但机场看得见这次请求。",
+        "nt.geo.run": "探测全部启用节点",
+        "nt.geo.unprobed": "还没有探测过。上面跑一次就会按落地国家分组列出来。",
+        "nt.geo.mismatchTitle": "落地与节点名不符的 {0} 个",
+        "nt.geo.mismatchHint": "机场的命名只是宣传语，改一个字符不需要动任何链路；落地是实测出来的。",
+
+        "nt.target.title": "目标可达",
+        "nt.target.desc": "对一个具体目标，逐节点测一次能不能到、要多久。用来挑「访问这个站该走哪个节点」。",
+        "nt.target.url": "目标地址",
+        "nt.target.run": "开始测试",
+        "nt.target.scope": "测试范围",
+        "nt.target.scopeAll": "全部启用节点",
+        "nt.target.scopeRegion": "只测落地在",
+        "nt.target.running": "正在测试 {0} 个节点…",
+        "nt.target.empty": "填一个目标地址，或点上面的常用目标。",
+        "nt.target.note": "结果只在这一页出现，不会写进节点的延迟——那一列是用测速端点量的基准值。",
+        "nt.ok": "可达", "nt.reachableCount": "{0} / {1} 个节点可达",
+        "nt.serviceOff": "sing-box 未在运行，测试要经过本地端口，请先启动服务。",
+    ]
+
+    nonisolated static let en: [String: String] = [
+        "brand.sub": "Local console",
+        "nav.overview": "Overview", "nav.nodes": "Nodes", "nav.subs": "Subscriptions",
+        "nav.nettest": "Network test",
+
+        "pref.theme.label": "Appearance",
+        "pref.theme.auto": "Auto", "pref.theme.light": "Light", "pref.theme.dark": "Dark",
+        "pref.lang.label": "Language",
+        "pref.lang.auto": "System", "pref.lang.zh": "中文", "pref.lang.en": "English",
+
+        "common.refresh": "Refresh", "common.save": "Save", "common.cancel": "Cancel",
+        "common.edit": "Edit", "common.delete": "Delete", "common.enable": "Enable",
+        "common.disable": "Disable", "common.update": "Update", "common.test": "Test",
+        "common.loading": "Loading…",
+        "common.copied": "Copied", "common.copyFailed": "Copy failed — select it manually",
+        "common.requestFailed": "Request failed",
+
+        "overall.running": "Running", "overall.stopped": "Stopped",
+        "overall.needsAttention": "Needs attention", "overall.failed": "Service error",
+
+        "status.idle": "Pending", "status.updating": "Updating", "status.success": "Updated",
+        "status.failed": "Update failed", "status.disabled": "Disabled",
+
+        "lat.untested": "Not tested", "lat.success": "OK", "lat.timeout": "Timed out",
+        "lat.connectionFailed": "Connection failed", "lat.httpFailed": "Bad response",
+
+        "health.title": "Needs attention",
+        "health.noSubscriptions": "No subscriptions yet — add a subscription URL first.",
+        "health.failedSubscriptions": "{0} subscription(s) failed to update recently.",
+        "health.noEnabledNodes": "No nodes are enabled, so there are no local exits for proxy clients.",
+        "health.missingSingBoxBinary": "sing-box executable not found — check the path on the Environment page.",
+        "health.missingLaunchAgent": "LaunchAgent not found — RouteBar may not be able to manage sing-box.",
+        "health.serviceFailure": "sing-box problem: {0}",
+
+        "ov.service.title": "sing-box service",
+        "ov.service.start": "Start", "ov.service.stop": "Stop",
+        "ov.service.agent": "LaunchAgent",
+        "ov.service.hint": "RouteBar does not run sing-box; it writes the config and drives launchctl. Quitting RouteBar does not drop the proxy.",
+        "ov.metric.enabled": "Active exits", "ov.metric.total": "Total entries",
+        "ov.metric.dedup": "Duplicates", "ov.metric.tested": "Tested", "ov.metric.failed": "Test failures",
+        "ov.actions.update": "Update subscriptions", "ov.actions.regen": "Regenerate",
+        "ov.test.title": "Node tests",
+        "ov.test.desc": "Latency is measured through the local port, so it covers the whole path. Landing detection asks which country the traffic exits from.",
+        "ov.test.all": "Test all", "ov.test.geo": "Detect all landings",
+        "ov.output.title": "Local subscription URL",
+        "ov.output.serving": "Serving", "ov.output.stopped": "Not listening",
+        "ov.output.surgeHint": "Use it in a Surge policy group like this:",
+        "ov.output.copyUrl": "Copy URL", "ov.output.copyLine": "Copy policy line",
+        "ov.output.otherHint": "Not using Surge? Just use the ports: each enabled node gets one local port that accepts SOCKS5 and HTTP at once.",
+
+        "nd.search": "Search node name or server",
+        "nd.allSubs": "All subscriptions", "nd.allProtocols": "All protocols",
+        "nd.allRegions": "All landings", "nd.allLatency": "All latencies",
+        "nd.lat.fast": "Fast", "nd.lat.medium": "Medium", "nd.lat.slow": "Slow",
+        "nd.lat.failed": "Unreachable", "nd.lat.untested": "Not tested",
+        "nd.sort.name": "By name", "nd.sort.latency": "By latency", "nd.sort.region": "By landing",
+        "nd.count": "{0} nodes", "nd.countFiltered": "{0} / {1} nodes",
+        "nd.empty": "No nodes yet — add and update a subscription first.",
+        "nd.noMatch": "No matching nodes. Try loosening the filters.",
+        "nd.state.subDisabled": "Subscription disabled", "nd.state.off": "Off",
+        "nd.state.waiting": "Awaiting config", "nd.state.port": "local {0}",
+        "nd.geo.probe": "Landing", "nd.geo.none": "Not detected",
+        "nd.geo.failed": "Landing detection failed", "nd.geo.mismatch": "Landing differs from the node name",
+        "nd.outputHint": "Generated name — this is what Surge shows",
+
+        "sb.title": "Subscriptions", "sb.add": "Add subscription", "sb.updateAll": "Update all",
+        "sb.name": "Name", "sb.url": "Subscription URL", "sb.note": "Note",
+        "sb.interval": "Update interval (hours)", "sb.template": "Node naming (blank follows global)",
+        "sb.urlPlaceholder": "Subscription URL (https://…)",
+        "sb.urlKeepHint": "Leave blank to keep the current URL",
+        "sb.templatePlaceholder": "Blank follows global",
+        "sb.saveHint": "Saving refetches this subscription immediately.",
+        "sb.empty": "No subscriptions yet — add one above.",
+        "sb.noMatch": "No subscription carries that protocol.",
+        "sb.deleteConfirm": "Delete subscription “{0}”?",
+        "sb.nodes": "{0} nodes", "sb.every": "every {0}h",
+        "sb.editing": "Editing “{0}”",
+        "sb.nameRequired": "Name cannot be empty",
+        "sb.added": "Added — fetching nodes…",
+        "sb.saved": "Saved — refetching nodes…",
+        "sb.never": "Never updated", "sb.justNow": "just now",
+        "sb.minutesAgo": "{0} min ago", "sb.hoursAgo": "{0} h ago", "sb.daysAgo": "{0} d ago",
+        "sb.credentialHint": "Subscription URLs carry provider credentials, live only in the keychain, and are never shown here.",
+
+        "naming.title": "Node naming",
+        "naming.test": "Preview", "naming.save": "Save", "naming.reset": "Reset to default",
+        "naming.help": "Placeholders: ",
+        "naming.hint": "“Preview” only runs the template in the box — nothing is saved. Individual subscriptions can override it under “Edit”.",
+        "naming.sample": "No enabled nodes right now, so here is a sample:",
+        "naming.willBecome": "{0} enabled nodes would become:",
+        "naming.saved": "Saved — output names regenerated",
+
+        "nt.geo.title": "Landing detection",
+        "nt.geo.desc": "Fetches Cloudflare’s trace endpoint through each node’s local port to see which IP and country the traffic exits from. Answers “which nodes are really in Singapore”.",
+        "nt.geo.privacy": "The request goes out through the node, so your real IP is not exposed — but the provider can see it.",
+        "nt.geo.run": "Detect all enabled nodes",
+        "nt.geo.unprobed": "Nothing detected yet. Run it above and the nodes will be grouped by landing country.",
+        "nt.geo.mismatchTitle": "{0} node(s) land somewhere else than their name says",
+        "nt.geo.mismatchHint": "A provider’s name is marketing — changing one character costs them nothing. The landing is measured.",
+
+        "nt.target.title": "Target reachability",
+        "nt.target.desc": "Tests one specific target through every node: can it get there, and how long does it take. Use it to pick which node to route a site through.",
+        "nt.target.url": "Target URL",
+        "nt.target.run": "Run test",
+        "nt.target.scope": "Scope",
+        "nt.target.scopeAll": "All enabled nodes",
+        "nt.target.scopeRegion": "Only nodes landing in",
+        "nt.target.running": "Testing {0} nodes…",
+        "nt.target.empty": "Enter a target URL, or pick one of the presets above.",
+        "nt.target.note": "Results stay on this page and never overwrite node latency — that column is the baseline measured against the latency endpoint.",
+        "nt.ok": "Reachable", "nt.reachableCount": "{0} / {1} nodes reachable",
+        "nt.serviceOff": "sing-box is not running. Tests go through the local ports — start the service first.",
+    ]
+}

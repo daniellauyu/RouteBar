@@ -12,7 +12,7 @@ public struct APISnapshot: nonisolated Codable, Sendable {
     public var overall: String
     public var overallLabel: String
     public var summary: String
-    public var health: [String]
+    public var health: [APIHealthIssue]
     public var service: APIService
     public var counts: APICounts
     public var subscriptions: [APISubscription]
@@ -27,7 +27,7 @@ public struct APISnapshot: nonisolated Codable, Sendable {
         overall = state.overall.rawValue
         overallLabel = state.overall.label
         summary = state.menuBarSummary
-        health = state.healthMessages
+        health = state.healthIssues.map(APIHealthIssue.init)
         service = APIService(state: state)
         counts = APICounts(state: state)
         subscriptions = state.subscriptions.map(APISubscription.init)
@@ -118,6 +118,48 @@ public struct APISubscription: nonisolated Codable, Sendable {
     }
 }
 
+/// 一条自检结论。
+///
+/// 同时给码和中文句子：网页按码取自己的文案（它可以切英文），认不出的码退回 `text`。
+/// 只给句子的话英文模式下这一栏会露出中文；只给码的话，将来新增一种结论、
+/// 而用户的浏览器还缓存着旧页面时，那一条会变成一个空白。
+public struct APIHealthIssue: nonisolated Codable, Sendable {
+    public var code: String
+    public var args: [String]
+    public var text: String
+
+    public nonisolated init(_ issue: HealthIssue) {
+        code = issue.code
+        args = issue.arguments
+        text = issue.text
+    }
+}
+
+/// 节点的真实落地：出口 IP 与它所在的国家。
+///
+/// 地区名由服务端出**中英两份**，而不是只发国家码让网页自己查表：Foundation 本来就带着
+/// 这份地区名，白拿；网页自带一份两百多条的对照表则要维护，还会和系统的叫法不一致。
+public struct APIGeo: nonisolated Codable, Sendable {
+    public var ok: Bool
+    public var ip: String
+    /// ISO 3166-1 alpha-2，大写。对端没给出地区时为空。
+    public var code: String
+    public var flag: String
+    public var nameZH: String
+    public var nameEN: String
+    public var measuredAt: Date
+
+    public nonisolated init(_ record: GeoRecord) {
+        ok = record.outcome == .success
+        ip = record.ip
+        code = record.countryCode
+        flag = record.flag
+        nameZH = record.regionName(locale: Locale(identifier: "zh_CN"))
+        nameEN = record.regionName(locale: Locale(identifier: "en_US"))
+        measuredAt = record.measuredAt
+    }
+}
+
 public struct APINode: nonisolated Codable, Sendable {
     public var id: String
     /// 相同连接参数共享的出口指纹；`id` 则唯一标识订阅中的这一条记录。
@@ -141,6 +183,10 @@ public struct APINode: nonisolated Codable, Sendable {
     public var band: String
     public var measuredAt: Date?
     public var sources: [String]
+    /// 来源订阅的 id。按订阅筛选要认它而不是名字——两条订阅完全可以重名。
+    public var sourceID: String
+    /// 最近一次落地探测。从未探测过时该键不出现。
+    public var geo: APIGeo?
 
     public nonisolated init(item: DisplayedNode, localPort: Int?, outputName: String?) {
         let node = item.node
@@ -166,6 +212,8 @@ public struct APINode: nonisolated Codable, Sendable {
         }
         measuredAt = node.latency?.measuredAt
         sources = [item.sourceName]
+        sourceID = item.sourceID.uuidString
+        geo = node.geo.map(APIGeo.init)
     }
 }
 
@@ -288,6 +336,60 @@ public struct APIEnabledInput: nonisolated Codable, Sendable {
 
     public nonisolated init(enabled: Bool) {
         self.enabled = enabled
+    }
+}
+
+/// `POST /api/probe` 的请求体：拿哪个目标、测哪些节点。
+public struct APIProbeInput: nonisolated Codable, Sendable {
+    /// 目标地址。必须是 http/https，由服务端校验后才发出去。
+    public var url: String
+    /// 要测的节点条目 id。留空表示「全部启用节点」。
+    public var ids: [String]?
+
+    public nonisolated init(url: String, ids: [String]? = nil) {
+        self.url = url
+        self.ids = ids
+    }
+}
+
+/// 一次目标可达探测的结果。
+///
+/// **不写进节点自身的延迟字段**，只在这次响应里出现：节点的 `latencyMilliseconds`
+/// 代表的是用测速端点量出来的基准值，各处都按它排序着色；把用户临时填的某个目标
+/// （可能是必然超时的站点）的结果混进去，会让「我测了下 GitHub，节点列表的延迟就全变了」。
+public struct APIProbeResult: nonisolated Codable, Sendable {
+    public var id: String
+    public var name: String
+    public var localPort: Int?
+    public var ok: Bool
+    public var outcome: String
+    public var milliseconds: Int?
+    /// 这个节点的落地国家码，方便一眼看出「能到目标的都是哪些地区的出口」。
+    public var geoCode: String?
+    public var geoFlag: String?
+
+    public nonisolated init(id: String, name: String, localPort: Int?, record: LatencyRecord,
+                            geo: GeoRecord?) {
+        self.id = id
+        self.name = name
+        self.localPort = localPort
+        ok = record.outcome == .success
+        outcome = record.outcome.rawValue
+        milliseconds = record.milliseconds
+        geoCode = geo?.countryCode.isEmpty == false ? geo?.countryCode : nil
+        geoFlag = geo?.flag.isEmpty == false ? geo?.flag : nil
+    }
+}
+
+public struct APIProbeResponse: nonisolated Codable, Sendable {
+    public var url: String
+    public var testedAt: Date
+    public var results: [APIProbeResult]
+
+    public nonisolated init(url: String, testedAt: Date = .now, results: [APIProbeResult]) {
+        self.url = url
+        self.testedAt = testedAt
+        self.results = results
     }
 }
 

@@ -24,6 +24,7 @@ public actor SubscriptionCoordinator {
     private let keychain: KeychainStore
     private let fetcher: SubscriptionFetcher
     private let latencyTester: LatencyTester
+    private let geoTester: GeoTester
 
     private var settings: RouteBarSettings
     private var runtime: RuntimeManager
@@ -39,11 +40,13 @@ public actor SubscriptionCoordinator {
     public init(stateStore: StateStore = StateStore(),
                 keychain: KeychainStore = KeychainStore(),
                 fetcher: SubscriptionFetcher = SubscriptionFetcher(),
-                latencyTester: LatencyTester = LatencyTester()) {
+                latencyTester: LatencyTester = LatencyTester(),
+                geoTester: GeoTester = GeoTester()) {
         self.stateStore = stateStore
         self.keychain = keychain
         self.fetcher = fetcher
         self.latencyTester = latencyTester
+        self.geoTester = geoTester
 
         // 从没配置过时，先看机器上有没有现成的 sing-box 服务可以接管。
         // 不这么做的话，已经手搭好一套的用户打开应用只会看到「LaunchAgent 未找到、
@@ -229,11 +232,11 @@ public actor SubscriptionCoordinator {
     public func update(_ id: UUID) async -> CoordinatorOutcome {
         guard let index = subscriptions.firstIndex(where: { $0.id == id }) else { return outcome() }
         let name = subscriptions[index].name
+        // 尝试时刻在动手之前就记下，两条失败路径（地址缺失、拉取出错）共用一个起算点。
+        subscriptions[index].lastAttemptAt = .now
         guard let value = keychain.value(for: id), let url = URL(string: value) else {
-            subscriptions[index].status = .failed
-            subscriptions[index].lastError = "订阅地址缺失或无效"
-            try? persist()
-            return outcome([.init(.error, "订阅", "更新失败：「\(name)」订阅地址缺失或无效")])
+            return outcome(recordFailure(id, name: name, reason: "订阅地址缺失或无效",
+                                         message: "更新失败：「\(name)」订阅地址缺失或无效"))
         }
 
         subscriptions[index].status = .updating
@@ -247,6 +250,8 @@ public actor SubscriptionCoordinator {
             subscriptions[current].updatedAt = .now
             subscriptions[current].status = .success
             subscriptions[current].lastError = nil
+            // 成功一次就把退避清零，下一次故障从最短的那一档重新开始。
+            subscriptions[current].consecutiveFailures = 0
             try? persist()
             let protocolSummary = ProxyProtocol.allCases.compactMap { type in
                 let count = parsed.count { $0.protocolType == type }
@@ -254,12 +259,26 @@ public actor SubscriptionCoordinator {
             }.joined(separator: " · ")
             return outcome([.init(.notice, "订阅", "「\(name)」更新成功，解析到 \(parsed.count) 个节点（\(protocolSummary)）")])
         } catch {
-            guard let current = subscriptions.firstIndex(where: { $0.id == id }) else { return outcome() }
-            subscriptions[current].status = .failed
-            subscriptions[current].lastError = error.localizedDescription
-            try? persist()
-            return outcome([.init(.error, "订阅", "「\(name)」更新失败：\(error.localizedDescription)")])
+            return outcome(recordFailure(id, name: name, reason: error.localizedDescription,
+                                         message: "「\(name)」更新失败：\(error.localizedDescription)"))
         }
+    }
+
+    /// 记一次失败：置状态、累加退避计数，并在日志里说明下次自动重试是什么时候。
+    ///
+    /// 「什么时候会再试」必须写出来。退避之后失败订阅不再每半分钟刷一行，用户看到的是
+    /// 一条孤零零的错误——不说明的话，那看着像是 RouteBar 从此不管这条订阅了。
+    ///
+    /// 订阅在 await 期间被删掉时返回空：那条记录已经不存在了，为它报一次失败只会让
+    /// 用户去找一个列表里没有的东西。
+    private func recordFailure(_ id: UUID, name: String, reason: String, message: String) -> [OutcomeMessage] {
+        guard let index = subscriptions.firstIndex(where: { $0.id == id }) else { return [] }
+        subscriptions[index].status = .failed
+        subscriptions[index].lastError = reason
+        subscriptions[index].consecutiveFailures += 1
+        try? persist()
+        let minutes = Int(UpdateSchedule.retryDelay(afterFailures: subscriptions[index].consecutiveFailures) / 60)
+        return [.init(.error, "订阅", "\(message)；\(minutes) 分钟后自动重试（现在也可以手动更新）")]
     }
 
     // MARK: - 生成与安装
@@ -377,6 +396,76 @@ public actor SubscriptionCoordinator {
         let host = endpoint.host ?? endpoint.absoluteString
         return outcome([.init(.info, "测速",
                               "完成 \(results.count) 个节点（经 \(host)）：\(succeeded) 可用 · \(results.count - succeeded) 失败")])
+    }
+
+    // MARK: - 落地探测
+
+    /// 探测一批节点的真实落地地区，结果落盘。
+    ///
+    /// 与测速分开而不是合成一次请求：测速要的是「这条链路有多快」，会连测多次取最好的；
+    /// 落地要的是「出口在哪」，测一次就够，而且换的是另一个对端。合在一起的话，
+    /// 想只刷新延迟的人会被迫连着把 86 个节点的落地也重探一遍。
+    public func probeGeo(_ mapped: [PortMappedNode]) async -> CoordinatorOutcome {
+        guard !mapped.isEmpty else { return outcome() }
+        let results = await geoTester.probe(mapped)
+        for subscriptionIndex in subscriptions.indices {
+            for nodeIndex in subscriptions[subscriptionIndex].nodes.indices {
+                let id = subscriptions[subscriptionIndex].nodes[nodeIndex].entryID
+                if let record = results[id] {
+                    subscriptions[subscriptionIndex].nodes[nodeIndex].geo = record
+                }
+            }
+        }
+        try? persist()
+
+        let succeeded = results.values.filter { $0.outcome == .success }.count
+        // 把落地与节点名不一致的那些点出来——这正是做这个功能的原因，
+        // 只报「成功 N 个」的话，用户还得自己逐行去比。
+        let mismatched = mismatchCount(results)
+        var text = "完成 \(results.count) 个节点的落地探测：\(succeeded) 个有出口 IP · \(results.count - succeeded) 个失败"
+        if mismatched > 0 {
+            text += "；其中 \(mismatched) 个的落地地区与节点名不符"
+        }
+        return outcome([.init(.info, "落地", text)])
+    }
+
+    /// 落地国家与节点名里写的地区对不上的个数。
+    ///
+    /// 只做一件很轻的事：拿地区的中英文名和国家码去节点名里找。机场的命名五花八门
+    /// （「新加坡」「狮城」「SG」「Singapore」都有），所以这只是个提示性的计数，
+    /// 不作为判据去改动任何数据——真要认哪个节点不对，界面上两个字段并排摆着更可靠。
+    private func mismatchCount(_ results: [String: GeoRecord]) -> Int {
+        let names = Dictionary(
+            subscriptions.flatMap(\.nodes).map { ($0.entryID, $0.name) },
+            uniquingKeysWith: { first, _ in first })
+        return results.reduce(into: 0) { total, entry in
+            let (id, record) = entry
+            guard record.outcome == .success, !record.countryCode.isEmpty,
+                  let name = names[id] else { return }
+            let candidates = [
+                record.countryCode,
+                record.regionName(locale: Locale(identifier: "zh_CN")),
+                record.regionName(locale: Locale(identifier: "en_US")),
+            ].filter { !$0.isEmpty }
+            let matched = candidates.contains { name.localizedCaseInsensitiveContains($0) }
+            if !matched { total += 1 }
+        }
+    }
+
+    /// 对指定目标逐节点测一次可达性，**结果不落盘、不写进节点**。
+    ///
+    /// 这一点是有意的：节点自己的 `latency` 字段代表的是「用当前测速端点量出来的基准延迟」，
+    /// 各处界面都按它排序和着色。网络测试页测的是用户临时填的某个目标（可能是一个必然
+    /// 超时的站点），把那个结果写进去会把整份基准数据污染掉，而用户根本不会预期
+    /// 「我测了一下 GitHub，节点列表里的延迟就全变了」。
+    public func probeTargets(_ mapped: [PortMappedNode], url: URL) async -> [String: LatencyRecord] {
+        guard !mapped.isEmpty else { return [:] }
+        var tester = latencyTester
+        tester.testURL = url
+        // 只测一次：这一页问的是「通不通、大概多久」，不是「最快能到多少」。
+        // 连测三次会把一页几十个节点的等待时间翻三倍。
+        tester.samples = 1
+        return await tester.test(mapped)
     }
 
     // MARK: - 服务控制

@@ -63,6 +63,14 @@ struct NodesView: View {
                     Label("测试全部", systemImage: "speedometer")
                 }
                 .disabled(!model.testingNodeIDs.isEmpty || model.mappedNodes.isEmpty)
+
+                Button {
+                    Task { await model.probeGeoForAllNodes() }
+                } label: {
+                    Label("探测落地", systemImage: "globe")
+                }
+                .disabled(!model.probingGeoIDs.isEmpty || model.mappedNodes.isEmpty)
+                .help("经每个节点的本机端口看流量出公网时落在哪个国家")
             }
 
             filterBar
@@ -113,10 +121,20 @@ struct NodesView: View {
                 GridRow {
                     latencyPicker.frame(maxWidth: .infinity)
                     sortPicker.frame(maxWidth: .infinity)
-                    Color.clear
+                    // 补齐第三格用的占位。必须声明它不参与定尺：`Color` 在两个方向上都是
+                    // 无限可拉伸的，不加这一句，它会把所在行撑到 Grid 拿到的任何高度。
+                    Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
                 }
             }
         }
+        // 筛选条永远只占它自己的高度。
+        //
+        // 少了这一句，上面那个 Grid 分支会成为**垂直方向可伸缩**的视图，于是 VStack 把
+        // 剩余高度在它和列表之间对半分——两行筛选器被拉开几百点，列表被顶到窗口下半部。
+        // 这条路径平时看不见：宽度够时 ViewThatFits 用的是定高的单行 HStack，
+        // 只有展开右侧详情把列表栏挤窄之后才会回落到 Grid，症状也就表现为
+        // 「一展开详情，整页就乱」。
+        .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
         .controlSize(.small)
         .padding(.horizontal, 20)
@@ -182,10 +200,15 @@ struct NodesView: View {
 
     // MARK: - 序号
 
-    /// 节点编号：在订阅的完整原始条目列表里的位置。
+    /// 节点编号：在完整列表里的位置。
     ///
-    /// 不用列表行号，因为这一页可以改排序和筛选——行号会随之变化，说「第 5 个」就没有意义了。
-    /// 按完整列表定位则筛选和排序不会改变编号，关闭节点也仍保留原编号。
+    /// 不用当前可见的行号，因为这一页可以改排序和筛选——行号会随之变化，说「第 5 个」
+    /// 就没有意义了，命令行的 `routebar test 5` 也会指到别的节点上。按完整列表定位，
+    /// 筛选和排序都不改变编号，关掉一个节点它也仍占着原来的号。
+    ///
+    /// 完整列表的顺序（`NodeCatalog.precedes`）和端口分配用的是同一个，所以默认视图下
+    /// 这一列是顺的，且第 N 个启用节点就占第 N 个端口。两者曾经各排各的，
+    /// 于是 76 号那一行占着 7701 端口、生成名叫 `JSSR-01`。
     private var nodeNumbers: [String: Int] {
         Dictionary(uniqueKeysWithValues: model.displayedNodes.enumerated().map { ($0.element.id, $0.offset + 1) })
     }
@@ -287,6 +310,15 @@ private struct NodeRow: View {
             }
 
             Spacer(minLength: 12)
+
+            // 落地：流量真正出公网时在哪个国家。节点名里写的地区是机场的说法，
+            // 两者对不上恰恰是要看见的东西，所以并排放而不是二选一。
+            if model.probingGeoIDs.contains(item.id) {
+                ProgressView().controlSize(.mini)
+            } else if let geo = item.node.geo, geo.outcome == .success, !geo.flag.isEmpty {
+                Text(verbatim: geo.flag)
+                    .help(geo.label() + (geo.ip.isEmpty ? "" : " · \(geo.ip)"))
+            }
 
             if model.testingNodeIDs.contains(item.id) {
                 ProgressView().controlSize(.small)

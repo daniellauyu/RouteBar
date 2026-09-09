@@ -18,6 +18,12 @@ public protocol RouteBarAPIHost: AnyObject, Sendable {
     func apiSetNodeEnabled(_ enabled: Bool, id: String) async
     func apiTestNode(_ id: String) async
     func apiTestAllNodes() async
+    /// 探测全部启用节点的真实落地地区。
+    func apiProbeGeoAll() async
+    /// 只探测一个节点的落地地区。
+    func apiProbeGeo(_ id: String) async
+    /// 对指定目标逐节点测一次可达性。结果只在这次响应里出现，不写进节点。
+    func apiProbeTargets(url: String, ids: [String]?) async throws -> APIProbeResponse
     func apiRegenerate() async
     func apiStartService() async
     func apiStopService() async
@@ -144,6 +150,15 @@ public struct APIRouter: Sendable {
             await host.apiSetNodeNameTemplate(input.template)
             return encode(await host.apiSnapshot())
 
+        case "probe":
+            guard method == "POST", rest.isEmpty else { return .notFound }
+            guard let input: APIProbeInput = decode(request.body) else { return .badRequest }
+            do {
+                return encode(try await host.apiProbeTargets(url: input.url, ids: input.ids))
+            } catch {
+                return .error(error.localizedDescription, status: 400)
+            }
+
         case "subscriptions":
             return await subscriptionRoute(rest, method: method, request: request, host: host)
 
@@ -218,6 +233,12 @@ public struct APIRouter: Sendable {
             return encode(await host.apiSnapshot())
         }
 
+        // 全量落地探测，同理不会与条目 id 相撞。
+        if rest == ["geo"] {
+            await host.apiProbeGeoAll()
+            return encode(await host.apiSnapshot())
+        }
+
         guard rest.count == 2 else { return .notFound }
         let id = rest[0]
         switch rest[1] {
@@ -226,6 +247,8 @@ public struct APIRouter: Sendable {
             await host.apiSetNodeEnabled(input.enabled, id: id)
         case "test":
             await host.apiTestNode(id)
+        case "geo":
+            await host.apiProbeGeo(id)
         default:
             return .notFound
         }
