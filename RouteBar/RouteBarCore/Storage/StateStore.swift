@@ -17,21 +17,19 @@ public struct StateStore: Sendable {
 
     // MARK: - 状态
 
-    /// 读不出来一律回落到空状态：首次启动、文件损坏、格式变更都走这一条路，
-    /// 应用永远能起来，大不了重新添加订阅。
-    public nonisolated func load() -> RouteBarState {
-        guard let data = try? Data(contentsOf: stateURL) else { return RouteBarState() }
+    /// 只有首次启动（文件不存在）回落默认值；损坏或读取失败不能伪装为空状态。
+    public nonisolated func load() throws -> RouteBarState {
+        guard let data = try readIfPresent(stateURL) else { return RouteBarState() }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode(RouteBarState.self, from: data)) ?? RouteBarState()
+        return try decoder.decode(RouteBarState.self, from: data)
     }
 
     public nonisolated func save(_ state: RouteBarState) throws {
-        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(state).write(to: stateURL, options: .atomic)
+        try writePrivate(encoder.encode(state), to: stateURL, keepBackup: true)
     }
 
     // MARK: - 设置
@@ -41,9 +39,9 @@ public struct StateStore: Sendable {
         FileManager.default.fileExists(atPath: settingsURL.path)
     }
 
-    public nonisolated func loadSettings() -> RouteBarSettings {
-        guard let data = try? Data(contentsOf: settingsURL) else { return RouteBarSettings.defaults() }
-        return (try? JSONDecoder().decode(RouteBarSettings.self, from: data)) ?? RouteBarSettings.defaults()
+    public nonisolated func loadSettings() throws -> RouteBarSettings {
+        guard let data = try readIfPresent(settingsURL) else { return RouteBarSettings.defaults() }
+        return try JSONDecoder().decode(RouteBarSettings.self, from: data)
     }
 
     /// 扫描 `~/Library/LaunchAgents` 下的 plist，交给 `LaunchAgentDiscovery` 判断。
@@ -61,18 +59,39 @@ public struct StateStore: Sendable {
     }
 
     public nonisolated func saveSettings(_ settings: RouteBarSettings) throws {
-        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(settings).write(to: settingsURL, options: .atomic)
+        try writePrivate(encoder.encode(settings), to: settingsURL, keepBackup: true)
     }
 
     // MARK: - 生成副本
 
     /// 在应用目录留一份生成结果，便于对照排查「装进去的到底是什么」。
     public nonisolated func saveGenerated(_ generated: GeneratedConfiguration) throws {
-        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        try generated.singBoxJSON.write(to: singBoxURL, options: .atomic)
-        try Data(generated.surgeProxySection.utf8).write(to: surgeSnippetURL, options: .atomic)
+        try writePrivate(generated.singBoxJSON, to: singBoxURL)
+        try writePrivate(Data(generated.surgeProxySection.utf8), to: surgeSnippetURL)
+    }
+
+    private nonisolated func readIfPresent(_ url: URL) throws -> Data? {
+        do {
+            return try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return nil
+        }
+    }
+
+    /// 私有目录阻止其他用户在原子替换到 chmod 之间访问文件；备份同样含有凭据。
+    private nonisolated func writePrivate(_ data: Data, to url: URL, keepBackup: Bool = false) throws {
+        let manager = FileManager.default
+        try manager.createDirectory(at: rootURL, withIntermediateDirectories: true,
+                                    attributes: [.posixPermissions: 0o700])
+        try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: rootURL.path)
+        if keepBackup, let previous = try readIfPresent(url), previous != data {
+            let backup = url.appendingPathExtension("backup")
+            try previous.write(to: backup, options: .atomic)
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
+        }
+        try data.write(to: url, options: .atomic)
+        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 }

@@ -34,11 +34,11 @@ public struct KeychainStore: Sendable {
         self.service = service
     }
 
-    public nonisolated func value(for id: UUID) -> String? {
-        if let url = loadAll()[id.uuidString] { return url }
+    public nonisolated func value(for id: UUID) throws -> String? {
+        if let url = try loadAll()[id.uuidString] { return url }
         // 合并条目里没有，可能是升级前写下的旧条目。旧条目的 ACL 仍绑在某个历史版本的
         // 签名上，读它会弹一次授权——这是升级后的最后一轮，迁过来之后不会再弹。
-        return migrateLegacyItems()[id.uuidString]
+        return try migrateLegacyItems()[id.uuidString]
     }
 
     /// 保存一条订阅的地址。**地址没变就什么都不做。**
@@ -54,27 +54,28 @@ public struct KeychainStore: Sendable {
     ///
     /// 不写也就不会重置 ACL，因此跳过是安全的——需要重新声明 ACL 的前提正是「这次写了」。
     public nonisolated func set(_ value: String, for id: UUID) throws {
-        var all = loadAll()
+        var all = try loadAll()
         if all[id.uuidString] != value {
             all[id.uuidString] = value
             try saveAll(all)
         }
         // 同一条订阅的旧条目留着只会是一份读不到也删不掉的过期 token。
         // 这一步不跟着上面的判断走：地址没变不代表旧条目已经清掉了。
-        removeLegacyItem(id)
+        try removeLegacyItem(id)
     }
 
-    public nonisolated func remove(_ id: UUID) {
-        var all = loadAll()
+    public nonisolated func remove(_ id: UUID) throws {
+        var all = try loadAll()
+        // 先清理旧条目：失败时保留合并条目的现值，避免下一次读取把旧地址迁回。
+        try removeLegacyItem(id)
         if all.removeValue(forKey: id.uuidString) != nil {
-            try? saveAll(all)
+            try saveAll(all)
         }
-        removeLegacyItem(id)
     }
 
     // MARK: - 合并条目的读写
 
-    private nonisolated func loadAll() -> [String: String] {
+    private nonisolated func loadAll() throws -> [String: String] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -83,9 +84,13 @@ public struct KeychainStore: Sendable {
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let map = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return [:] }
+        guard status == errSecSuccess else { throw KeychainError.status(status) }
+        guard let data = item as? Data,
+              let map = try? JSONDecoder().decode([String: String].self, from: data) else {
+            throw KeychainError.invalidData
+        }
         return map
     }
 
@@ -173,7 +178,7 @@ public struct KeychainStore: Sendable {
     /// 逐条迁的话，一条订阅要等到它自己到期被读时才迁——暂停的、停用的订阅可能几天后
     /// 才轮到，于是用户以为已经消停的授权框过阵子又冒出来一个。宁可在升级后的第一次
     /// 更新里把 N 个框一次弹完，也好过拖成几天里零星弹 N 次。
-    private nonisolated func migrateLegacyItems() -> [String: String] {
+    private nonisolated func migrateLegacyItems() throws -> [String: String] {
         // 分两步：先列账号名，再逐条读值。老式钥匙串不接受 `MatchLimitAll` 与
         // `ReturnData` 同时出现（返回 errSecParam），一次批量把值全取回来是做不到的。
         let query: [String: Any] = [
@@ -183,46 +188,62 @@ public struct KeychainStore: Sendable {
             kSecReturnAttributes as String: true,
         ]
         var result: CFTypeRef?
-        var all = loadAll()
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let items = result as? [[String: Any]] else { return all }
+        var all = try loadAll()
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return all }
+        guard status == errSecSuccess else { throw KeychainError.status(status) }
+        guard let items = result as? [[String: Any]] else { throw KeychainError.invalidData }
 
         var migrated: [UUID] = []
         for item in items {
             // 账号名是 UUID 的才是旧条目；合并条目自己的账号名不是 UUID，会在这里被跳过。
             guard let account = item[kSecAttrAccount as String] as? String,
-                  let id = UUID(uuidString: account),
-                  let url = legacyValue(id) else { continue }
-            all[account] = url
+                  let id = UUID(uuidString: account) else { continue }
+            // 旧条目可能只是上次未获准删除的残留，绝不能覆盖合并条目里更新后的地址。
+            if all[account] == nil {
+                guard let url = try legacyValue(id) else { continue }
+                all[account] = url
+            }
             migrated.append(id)
         }
         guard !migrated.isEmpty else { return all }
-        // 写不进去就先把值给调用方用着，下次再迁；这时删掉旧条目会把订阅地址弄丢。
-        guard (try? saveAll(all)) != nil else { return all }
-        for id in migrated { removeLegacyItem(id) }
+        // 完整写入成功后才删除旧数据；任何失败都交给调用方呈现。
+        try saveAll(all)
+        for id in migrated { try removeLegacyItem(id) }
         return all
     }
 
-    private nonisolated func legacyValue(_ id: UUID) -> String? {
+    private nonisolated func legacyValue(_ id: UUID) throws -> String? {
         var query = legacyQuery(id)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess else { throw KeychainError.status(status) }
+        guard let data = item as? Data, let value = String(data: data, encoding: .utf8) else {
+            throw KeychainError.invalidData
+        }
+        return value
     }
 
     /// 条目不存在时 `SecItemDelete` 直接返回 `errSecItemNotFound`，不会弹框，
     /// 所以无条件调用是安全的，不必先查一次存在与否。
-    private nonisolated func removeLegacyItem(_ id: UUID) {
-        SecItemDelete(legacyQuery(id) as CFDictionary)
+    private nonisolated func removeLegacyItem(_ id: UUID) throws {
+        let status = SecItemDelete(legacyQuery(id) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw KeychainError.status(status)
+        }
     }
 
     public enum KeychainError: LocalizedError {
         case status(OSStatus)
+        case invalidData
         public var errorDescription: String? {
-            switch self { case .status(let status): "钥匙串操作失败（\(status)）" }
+            switch self {
+            case .status(let status): "钥匙串操作失败（\(status)）"
+            case .invalidData: "钥匙串中的订阅地址数据损坏，已保留原条目，请恢复后重试"
+            }
         }
     }
 }

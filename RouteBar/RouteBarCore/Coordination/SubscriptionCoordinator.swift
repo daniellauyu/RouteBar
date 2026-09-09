@@ -36,6 +36,9 @@ public actor SubscriptionCoordinator {
     private let adoptedLaunchAgent: DiscoveredLaunchAgent?
     private var regenerationInProgress = false
     private var regenerationWaiters: [CheckedContinuation<Void, Never>] = []
+    private var startupMessages: [OutcomeMessage] = []
+    private var stateLoadFailure: String?
+    private var subscriptionRevisions: [UUID: UUID] = [:]
 
     public init(stateStore: StateStore = StateStore(),
                 keychain: KeychainStore = KeychainStore(),
@@ -51,13 +54,22 @@ public actor SubscriptionCoordinator {
         // 从没配置过时，先看机器上有没有现成的 sing-box 服务可以接管。
         // 不这么做的话，已经手搭好一套的用户打开应用只会看到「LaunchAgent 未找到、
         // 服务已停止」——而他的代理明明跑得好好的，只是标识对不上。
-        var loadedSettings = stateStore.loadSettings()
+        var loadedSettings = RouteBarSettings.defaults()
+        var settingsLoaded = false
+        var loadMessages: [OutcomeMessage] = []
+        do {
+            loadedSettings = try stateStore.loadSettings()
+            settingsLoaded = true
+        } catch {
+            loadMessages.append(.init(.error, "设置", "读取设置失败，原文件已保留：\(error.localizedDescription)"))
+        }
         var adopted: DiscoveredLaunchAgent?
         if !stateStore.hasStoredSettings,
            let discovered = LaunchAgentDiscovery.discover(plists: stateStore.launchAgentPlists()) {
             loadedSettings = LaunchAgentDiscovery.adopt(discovered, into: loadedSettings)
             adopted = discovered
-            try? stateStore.saveSettings(loadedSettings)
+            do { try stateStore.saveSettings(loadedSettings) }
+            catch { loadMessages.append(.init(.error, "设置", "保存接管设置失败：\(error.localizedDescription)")) }
         }
         adoptedLaunchAgent = adopted
 
@@ -65,11 +77,20 @@ public actor SubscriptionCoordinator {
         //
         // 解码时缺失的字段会取默认值，其中 subscriptionToken 是**每次随机生成**的——
         // 不落盘的话订阅地址每次启动都变，用户填进 Surge 的 policy-path 第二天就失效了。
-        if stateStore.hasStoredSettings {
-            try? stateStore.saveSettings(loadedSettings)
+        if settingsLoaded, stateStore.hasStoredSettings {
+            do { try stateStore.saveSettings(loadedSettings) }
+            catch { loadMessages.append(.init(.error, "设置", "保存设置失败：\(error.localizedDescription)")) }
         }
 
-        let loadedState = stateStore.load()
+        var loadedState = RouteBarState()
+        var stateReadFailed = false
+        do { loadedState = try stateStore.load() }
+        catch {
+            stateLoadFailure = error.localizedDescription
+            stateReadFailed = true
+            loadMessages.append(.init(.error, "存储", "读取订阅状态失败，已阻止覆盖原文件：\(error.localizedDescription)"))
+        }
+        startupMessages = loadMessages
         settings = loadedSettings
         runtime = RuntimeManager(settings: loadedSettings)
         subscriptions = loadedState.subscriptions.map { subscription in
@@ -77,7 +98,7 @@ public actor SubscriptionCoordinator {
             subscription.nodes = NodeCatalog.assignEntryIDs(subscription.nodes, sourceID: subscription.id)
             return subscription
         }
-        autoUpdatePaused = loadedState.autoUpdatePaused
+        autoUpdatePaused = loadedState.autoUpdatePaused || !settingsLoaded || stateReadFailed
     }
 
     // MARK: - 快照
@@ -117,13 +138,14 @@ public actor SubscriptionCoordinator {
 
     /// 首次启动流程：探测既有配置、刷新服务状态。
     public func bootstrap() async -> CoordinatorOutcome {
-        var messages: [OutcomeMessage] = []
+        var messages = startupMessages
+        startupMessages.removeAll()
         if let adopted = adoptedLaunchAgent {
             messages.append(.init(.notice, "环境",
                                   "已接管现有的 sing-box 服务「\(adopted.label)」，配置与日志路径取自它的 LaunchAgent"))
         }
         serviceState = await runtime.status()
-        if subscriptions.isEmpty {
+        if subscriptions.isEmpty, stateLoadFailure == nil {
             do {
                 if let imported = try importExistingSubscription() {
                     messages.append(.init(.notice, "订阅", "从现有 Mihomo 配置导入了订阅「\(imported)」"))
@@ -152,7 +174,7 @@ public actor SubscriptionCoordinator {
 
     // MARK: - 订阅增删改
 
-    public func subscriptionURL(for id: UUID) -> String { keychain.value(for: id) ?? "" }
+    public func subscriptionURL(for id: UUID) throws -> String { try keychain.value(for: id) ?? "" }
 
     /// `nodeNameTemplate` 传 nil 表示「这次不动它」，传空串表示「清掉，跟随全局」。
     /// 两者必须分开：调用方（网页表单、命令行）不一定每次都带上这个字段。
@@ -160,7 +182,9 @@ public actor SubscriptionCoordinator {
     public func saveSubscription(id: UUID?, name: String, url: String, note: String, interval: Int,
                                  nodeNameTemplate: String? = nil) throws -> UUID {
         let recordID = id ?? UUID()
+        try ensureStateWritable()
         try keychain.set(url, for: recordID)
+        let previous = subscriptions
         let normalizedTemplate = nodeNameTemplate.map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -176,35 +200,58 @@ public actor SubscriptionCoordinator {
                 id: recordID, name: name, note: note, updateIntervalHours: interval,
                 nodeNameTemplate: (normalizedTemplate?.isEmpty ?? true) ? nil : normalizedTemplate))
         }
-        try? persist()
+        do { try persist() }
+        catch { subscriptions = previous; throw error }
+        subscriptionRevisions[recordID] = UUID()
         return recordID
     }
 
     public func delete(_ id: UUID) -> CoordinatorOutcome {
         let name = subscriptions.first { $0.id == id }?.name ?? "未知订阅"
-        keychain.remove(id)
-        subscriptions.removeAll { $0.id == id }
-        try? persist()
+        let previous = subscriptions
+        do {
+            try ensureStateWritable()
+            subscriptions.removeAll { $0.id == id }
+            try persist()
+        } catch {
+            subscriptions = previous
+            return outcome([.init(.error, "订阅", "删除订阅失败：\(error.localizedDescription)")])
+        }
+        subscriptionRevisions.removeValue(forKey: id)
+        do { try keychain.remove(id) }
+        catch {
+            return outcome([.init(.error, "订阅", "订阅已删除，但钥匙串条目清理失败：\(error.localizedDescription)")])
+        }
         return outcome([.init(.notice, "订阅", "已删除订阅「\(name)」")])
     }
 
     public func setSubscriptionEnabled(_ enabled: Bool, for id: UUID) async -> CoordinatorOutcome {
         guard let index = subscriptions.firstIndex(where: { $0.id == id }) else { return outcome() }
+        let previous = subscriptions
         subscriptions[index].isEnabled = enabled
         subscriptions[index].status = enabled ? .idle : .disabled
         let name = subscriptions[index].name
-        try? persist()
+        do { try persist() }
+        catch {
+            subscriptions = previous
+            return outcome([.init(.error, "存储", "保存订阅状态失败：\(error.localizedDescription)")])
+        }
         return outcome([.init(.notice, "订阅", "\(enabled ? "启用" : "停用")订阅「\(name)」")])
     }
 
     public func setNodeEnabled(_ enabled: Bool, id: String) -> CoordinatorOutcome {
+        let previous = subscriptions
         var name = id
         for subscriptionIndex in subscriptions.indices {
             for nodeIndex in subscriptions[subscriptionIndex].nodes.indices
             where subscriptions[subscriptionIndex].nodes[nodeIndex].entryID == id {
                 subscriptions[subscriptionIndex].nodes[nodeIndex].isEnabled = enabled
                 name = subscriptions[subscriptionIndex].nodes[nodeIndex].name
-                try? persist()
+                do { try persist() }
+                catch {
+                    subscriptions = previous
+                    return outcome([.init(.error, "存储", "保存节点状态失败：\(error.localizedDescription)")])
+                }
                 return outcome([.init(.info, "节点", "\(enabled ? "启用" : "停用")节点「\(name)」")])
             }
         }
@@ -232,16 +279,19 @@ public actor SubscriptionCoordinator {
     public func update(_ id: UUID) async -> CoordinatorOutcome {
         guard let index = subscriptions.firstIndex(where: { $0.id == id }) else { return outcome() }
         let name = subscriptions[index].name
+        let revision = subscriptionRevisions[id]
         // 尝试时刻在动手之前就记下，两条失败路径（地址缺失、拉取出错）共用一个起算点。
         subscriptions[index].lastAttemptAt = .now
-        guard let value = keychain.value(for: id), let url = URL(string: value) else {
-            return outcome(recordFailure(id, name: name, reason: "订阅地址缺失或无效",
-                                         message: "更新失败：「\(name)」订阅地址缺失或无效"))
-        }
-
         subscriptions[index].status = .updating
         do {
+            guard let value = try keychain.value(for: id), let url = URL(string: value) else {
+                return outcome(recordFailure(id, name: name, reason: "订阅地址缺失或无效",
+                                             message: "更新失败：「\(name)」订阅地址缺失或无效"))
+            }
             let data = try await fetcher.fetch(url)
+            guard subscriptionRevisions[id] == revision else {
+                return outcome([.init(.info, "订阅", "「\(name)」已修改，忽略旧请求结果")])
+            }
             let parsed = try SubscriptionParser.parseSubscription(data, sourceID: id)
             guard !parsed.isEmpty else { throw SubscriptionError.empty }
             // 重新定位：await 期间列表可能已被增删。
@@ -252,13 +302,14 @@ public actor SubscriptionCoordinator {
             subscriptions[current].lastError = nil
             // 成功一次就把退避清零，下一次故障从最短的那一档重新开始。
             subscriptions[current].consecutiveFailures = 0
-            try? persist()
+            try persist()
             let protocolSummary = ProxyProtocol.allCases.compactMap { type in
                 let count = parsed.count { $0.protocolType == type }
                 return count > 0 ? "\(type.label) \(count)" : nil
             }.joined(separator: " · ")
             return outcome([.init(.notice, "订阅", "「\(name)」更新成功，解析到 \(parsed.count) 个节点（\(protocolSummary)）")])
         } catch {
+            guard subscriptionRevisions[id] == revision else { return outcome() }
             return outcome(recordFailure(id, name: name, reason: error.localizedDescription,
                                          message: "「\(name)」更新失败：\(error.localizedDescription)"))
         }
@@ -276,9 +327,11 @@ public actor SubscriptionCoordinator {
         subscriptions[index].status = .failed
         subscriptions[index].lastError = reason
         subscriptions[index].consecutiveFailures += 1
-        try? persist()
+        var storageMessages: [OutcomeMessage] = []
+        do { try persist() }
+        catch { storageMessages.append(.init(.error, "存储", "保存失败状态失败：\(error.localizedDescription)")) }
         let minutes = Int(UpdateSchedule.retryDelay(afterFailures: subscriptions[index].consecutiveFailures) / 60)
-        return [.init(.error, "订阅", "\(message)；\(minutes) 分钟后自动重试（现在也可以手动更新）")]
+        return storageMessages + [.init(.error, "订阅", "\(message)；\(minutes) 分钟后自动重试（现在也可以手动更新）")]
     }
 
     // MARK: - 生成与安装
@@ -306,14 +359,24 @@ public actor SubscriptionCoordinator {
             let generated = try ConfigurationGenerator.generate(
                 nodes: active, naming: NodeNaming(settings: settings, subscriptions: subscriptions))
             guard !generated.nodes.isEmpty else {
-                return [.init(.warning, "配置", "没有启用节点，已跳过生成")]
+                serviceState = await runtime.stop()
+                if let reason = serviceState.failureReason {
+                    return [.init(.error, "服务", "没有启用节点，但停止旧出口失败：\(reason)")]
+                }
+                // 登录时 LaunchAgent 可能再次加载，磁盘配置也必须撤销旧出口。
+                if FileManager.default.fileExists(atPath: runtime.paths.singBoxConfig.path) {
+                    try await runtime.install(generated)
+                }
+                try stateStore.saveGenerated(generated)
+                generatedAt = .now
+                return [.init(.notice, "配置", "没有启用节点，已停止 sing-box 并清空客户端出口")]
             }
-            try stateStore.saveGenerated(generated)
-            generatedAt = .now
             // 只有 sing-box 那一份变了才值得重启：只改节点名时那份 JSON 一个字节都没动
             // （名字只出现在给客户端的策略列表里），顺手重启等于白断一次全部连接。
             let singBoxUnchanged = runtime.installedSingBoxConfigMatches(generated)
             if singBoxUnchanged, !forceRestart {
+                try stateStore.saveGenerated(generated)
+                generatedAt = .now
                 // 不重装也要把服务状态对齐：跳过分支是「什么都不做」，但期间 sing-box
                 // 可能已经被外部停掉或崩了，直接 return 会让界面一直显示旧状态，
                 // 直到下次窗口激活才自我纠正。
@@ -321,6 +384,8 @@ public actor SubscriptionCoordinator {
                 return [.init(.info, "配置", "配置未变化，已跳过安装与 sing-box 重启")]
             }
             try await runtime.install(generated)
+            try stateStore.saveGenerated(generated)
+            generatedAt = .now
             var messages: [OutcomeMessage] = [
                 .init(.notice, "配置", "已生成并安装 \(generated.nodes.count) 个节点出口"),
             ]
@@ -390,7 +455,8 @@ public actor SubscriptionCoordinator {
                 }
             }
         }
-        try? persist()
+        do { try persist() }
+        catch { return outcome([.init(.error, "存储", "测速结果保存失败：\(error.localizedDescription)")]) }
         let succeeded = results.values.filter { $0.outcome == .success }.count
         // 记下用了哪个端点：换端点后数字会整体平移，日志里没有这一条就无从解释。
         let host = endpoint.host ?? endpoint.absoluteString
@@ -416,7 +482,8 @@ public actor SubscriptionCoordinator {
                 }
             }
         }
-        try? persist()
+        do { try persist() }
+        catch { return outcome([.init(.error, "存储", "落地探测结果保存失败：\(error.localizedDescription)")]) }
 
         let succeeded = results.values.filter { $0.outcome == .success }.count
         // 把落地与节点名不一致的那些点出来——这正是做这个功能的原因，
@@ -486,6 +553,9 @@ public actor SubscriptionCoordinator {
 
     public func stopService() async -> CoordinatorOutcome {
         serviceState = await runtime.stop()
+        if let reason = serviceState.failureReason {
+            return outcome([.init(.error, "服务", "停止 sing-box 失败：\(reason)")])
+        }
         return outcome([.init(.notice, "服务", "已停止 sing-box")])
     }
 
@@ -508,13 +578,16 @@ public actor SubscriptionCoordinator {
     ///
     /// 归档的是**全部**行，不像内存缓冲那样只留 warning 以上：缓冲是「现在要注意
     /// 什么」，归档是「那天到底发生了什么」，后者被过滤过就失去了回溯的意义。
-    public func archiveSingBoxLog(_ lines: [SingBoxLogLine]) {
+    @discardableResult
+    public func archiveSingBoxLog(_ lines: [SingBoxLogLine]) -> Bool {
         do {
             try logArchive.append(lines)
         } catch {
             CoreLog.configuration.error("归档日志失败：\(error.localizedDescription, privacy: .public)")
+            return false
         }
         pruneIfDue()
+        return true
     }
 
     /// 清理最多一小时来一次。
@@ -605,15 +678,28 @@ public actor SubscriptionCoordinator {
     }
 
     public func setAutoUpdatePaused(_ paused: Bool) -> CoordinatorOutcome {
+        let previous = autoUpdatePaused
         autoUpdatePaused = paused
-        try? persist()
+        do { try persist() }
+        catch {
+            autoUpdatePaused = previous
+            return outcome([.init(.error, "存储", "保存自动更新状态失败：\(error.localizedDescription)")])
+        }
         return outcome([.init(.notice, "更新", paused ? "已暂停自动更新" : "已恢复自动更新")])
     }
 
     // MARK: - 落盘
 
     private func persist() throws {
+        try ensureStateWritable()
         try stateStore.save(RouteBarState(subscriptions: subscriptions, autoUpdatePaused: autoUpdatePaused))
+    }
+
+    private func ensureStateWritable() throws {
+        if let stateLoadFailure {
+            throw NSError(domain: "RouteBar.Storage", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "原订阅状态无法读取，已阻止覆盖。请先恢复原文件再重启：\(stateLoadFailure)"])
+        }
     }
 
     enum SubscriptionError: LocalizedError {

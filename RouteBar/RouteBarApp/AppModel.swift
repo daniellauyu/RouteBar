@@ -30,6 +30,11 @@ final class AppModel: ObservableObject {
     private let log = RuntimeLog.shared
     private var schedulerTask: Task<Void, Never>?
     private var regenerationTask: Task<Void, Never>?
+    private var pendingUpdateIDs: Set<UUID> = []
+    private var pendingUpdateNeedsRegeneration = false
+    private var pendingUpdateInitiatedByUser = false
+    private var logReloadTask: Task<Void, Never>?
+    private var ingestInProgress = false
     private var runtimePathsCache: RuntimePaths = RuntimePaths()
 
     init() {
@@ -72,6 +77,8 @@ final class AppModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
                 guard let self else { return }
+                guard !Task.isCancelled else { return }
+                self.apply(await self.coordinator.refreshServiceState())
                 await self.runDueUpdates()
             }
         }
@@ -218,7 +225,11 @@ final class AppModel: ObservableObject {
     // MARK: - 订阅操作
 
     func subscriptionURL(for subscription: SubscriptionRecord) async -> String {
-        await coordinator.subscriptionURL(for: subscription.id)
+        do { return try await coordinator.subscriptionURL(for: subscription.id) }
+        catch {
+            alertMessage = "读取订阅地址失败：\(error.localizedDescription)"
+            return ""
+        }
     }
 
     func saveSubscription(id: UUID?, name: String, url: String, note: String, interval: Int,
@@ -265,6 +276,9 @@ final class AppModel: ObservableObject {
 
     func deleteSubscription(_ id: UUID) async {
         apply(await coordinator.delete(id), alertOnError: true)
+        if !subscriptions.contains(where: { $0.id == id }) {
+            apply(await coordinator.regenerate(), alertOnError: true)
+        }
     }
 
     func applySubscriptionEnabled(_ enabled: Bool, id: UUID) async {
@@ -308,7 +322,13 @@ final class AppModel: ObservableObject {
     /// 而不是全部跑完才一次性刷新。
     private func runUpdates(_ ids: [UUID], regenerateAfter: Bool, initiatedByUser: Bool) async {
         // 外层入口可能在 guard 后跨 actor await；恢复时必须在这里再次原子地抢占更新权。
-        guard !ids.isEmpty, !isUpdating else { return }
+        guard !ids.isEmpty else { return }
+        if isUpdating {
+            pendingUpdateIDs.formUnion(ids)
+            pendingUpdateNeedsRegeneration = pendingUpdateNeedsRegeneration || regenerateAfter
+            pendingUpdateInitiatedByUser = pendingUpdateInitiatedByUser || initiatedByUser
+            return
+        }
         regenerationTask?.cancel()
         regenerationTask = nil
         isUpdating = true
@@ -316,6 +336,15 @@ final class AppModel: ObservableObject {
         defer {
             isUpdating = false
             updateProgress = 0
+            if !pendingUpdateIDs.isEmpty {
+                let next = Array(pendingUpdateIDs)
+                let regenerate = pendingUpdateNeedsRegeneration
+                let userInitiated = pendingUpdateInitiatedByUser
+                pendingUpdateIDs.removeAll()
+                pendingUpdateNeedsRegeneration = false
+                pendingUpdateInitiatedByUser = false
+                Task { await self.runUpdates(next, regenerateAfter: regenerate, initiatedByUser: userInitiated) }
+            }
         }
         var errors: [String] = []
         for (offset, id) in ids.enumerated() {
@@ -462,6 +491,9 @@ final class AppModel: ObservableObject {
     /// RouteBar 自己的事件一条都留不下，等于把这一页毁掉。生成的配置已经把级别
     /// 降到 warn，这里再挡一道：老机器上那份历史日志里仍然全是 INFO。
     private func ingestSingBoxLog() async {
+        guard !ingestInProgress else { return }
+        ingestInProgress = true
+        defer { ingestInProgress = false }
         if !singBoxLogOffsetLoaded {
             singBoxLogOffset = await coordinator.ingestOffset()
             singBoxLogOffsetLoaded = true
@@ -471,13 +503,11 @@ final class AppModel: ObservableObject {
         // 无条件回写偏移等于在用户盯着日志时每隔几秒写一次盘，而绝大多数轮次
         // sing-box 一个字节都没写。
         guard chunk.offset != singBoxLogOffset || !chunk.text.isEmpty else { return }
-        singBoxLogOffset = chunk.offset
-        await coordinator.saveIngestOffset(chunk.offset)
-        guard !chunk.text.isEmpty else { return }
         let lines = SingBoxLogParser.parse(tail: chunk.text)
-        guard !lines.isEmpty else { return }
         // 先归档再筛：归档留全量（回溯「那天发生了什么」），内存缓冲只留要紧的。
-        await coordinator.archiveSingBoxLog(lines)
+        guard await coordinator.archiveSingBoxLog(lines) else { return }
+        await coordinator.saveIngestOffset(chunk.offset)
+        singBoxLogOffset = chunk.offset
         for line in lines where line.level >= .warning {
             log.ingest(line)
         }
@@ -524,8 +554,13 @@ final class AppModel: ObservableObject {
     private func reloadDayIfShowing(_ timestamps: [Date]) async {
         let calendar = Calendar.current
         let touched = timestamps.contains { calendar.isDate($0, inSameDayAs: viewingDay) }
-        guard touched else { return }
-        await loadDay()
+        guard touched, selectedSection == .logs, logReloadTask == nil else { return }
+        logReloadTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard let self else { return }
+            await self.loadDay()
+            self.logReloadTask = nil
+        }
     }
 
     func refreshLogDates() async {
@@ -1045,7 +1080,7 @@ extension AppModel: RouteBarAPIHost {
         var url = input.url?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if url.isEmpty {
             guard let existingID else { throw APIInputError.missingURL }
-            url = await coordinator.subscriptionURL(for: existingID)
+            url = try await coordinator.subscriptionURL(for: existingID)
             guard !url.isEmpty else { throw APIInputError.missingURL }
         }
         guard let parsed = URL(string: url), parsed.scheme == "http" || parsed.scheme == "https" else {

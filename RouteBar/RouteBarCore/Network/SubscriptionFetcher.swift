@@ -16,7 +16,12 @@ public struct SubscriptionFetcher: Sendable {
         request.setValue("RouteBar (macOS)", forHTTPHeaderField: "User-Agent")
         request.cachePolicy = .reloadIgnoringLocalCacheData
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = timeout
+        configuration.timeoutIntervalForResource = timeout
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let (data, response) = try await BoundedHTTPData.read(request, session: session, limit: 8 * 1024 * 1024)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
             throw FetchError.httpStatus(http.statusCode)
         }

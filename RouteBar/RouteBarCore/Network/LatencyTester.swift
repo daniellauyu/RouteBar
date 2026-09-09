@@ -67,6 +67,7 @@ public struct LatencyTester: Sendable {
     private nonisolated func probe(_ mapped: PortMappedNode) async -> (String, LatencyRecord) {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = timeout
+        configuration.timeoutIntervalForResource = timeout
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.connectionProxyDictionary = [
             "SOCKSEnable": true, "SOCKSProxy": "127.0.0.1", "SOCKSPort": mapped.localPort,
@@ -79,7 +80,8 @@ public struct LatencyTester: Sendable {
         do {
             var request = URLRequest(url: testURL)
             request.cachePolicy = .reloadIgnoringLocalCacheData
-            let (_, response) = try await session.data(for: request, delegate: metrics)
+            let (_, response) = try await BoundedHTTPData.read(request, session: session,
+                                                            limit: 2 * 1024 * 1024, delegate: metrics)
             let elapsed = start.duration(to: .now)
             let milliseconds = metrics.milliseconds(fallback: elapsed)
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0

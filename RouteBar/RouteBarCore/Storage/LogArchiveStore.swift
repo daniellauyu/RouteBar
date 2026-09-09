@@ -39,11 +39,10 @@ public struct LogArchiveStore: Sendable {
     ///
     /// `limit` 是**行数**上限，从末尾取：某一天可能有几十万行，整份塞进界面会直接卡死。
     public nonisolated func read(_ date: Date, limit: Int = 5_000) -> [SingBoxLogLine] {
+        guard limit > 0 else { return [] }
         let lines = LogArchive.fileNames(for: date)
-            .compactMap { try? String(contentsOf: directory.appendingPathComponent($0), encoding: .utf8) }
-            .flatMap { $0.split(separator: "\n", omittingEmptySubsequences: true) }
+            .flatMap { tailLines(directory.appendingPathComponent($0), limit: limit) }
             .compactMap { SingBoxLogParser.parse(String($0)) }
-        guard lines.count > limit else { return lines }
         // 先按时间排再截断。两份文件是首尾相接读进来的，直接取末尾会把后一份的开头
         // 当成「最新」，而丢掉的可能恰恰是当天最后发生的事。没有时间戳的（启动失败
         // 那种）当作最新保留——它是最要紧的一类，不能被截掉。
@@ -56,6 +55,36 @@ public struct LogArchiveStore: Sendable {
             }
             .suffix(limit)
             .map(\.element)
+    }
+
+    /// 从后往前按块读取，只解析末尾需要的行；超长单行也受 8 MB 上限约束。
+    private nonisolated func tailLines(_ url: URL, limit: Int) -> [Substring] {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
+        defer { try? handle.close() }
+        guard var position = try? handle.seekToEnd() else { return [] }
+        var chunks: [Data] = []
+        var bytes = 0
+        var newlines = 0
+        let byteLimit = 8 * 1024 * 1024
+        while position > 0, newlines <= limit, bytes < byteLimit {
+            let count = min(64 * 1024, Int(min(position, UInt64(byteLimit - bytes))))
+            position -= UInt64(count)
+            guard (try? handle.seek(toOffset: position)) != nil,
+                  let chunk = try? handle.read(upToCount: count), !chunk.isEmpty else { break }
+            chunks.append(chunk)
+            bytes += chunk.count
+            newlines += chunk.reduce(0) { $0 + ($1 == 0x0A ? 1 : 0) }
+        }
+        var data = Data()
+        data.reserveCapacity(bytes)
+        for chunk in chunks.reversed() { data.append(chunk) }
+        // 起点在文件中间时，首段可能是半行，不能当作独立日志解析。
+        if position > 0 {
+            guard let newline = data.firstIndex(of: 0x0A) else { return [] }
+            data.removeSubrange(...newline)
+        }
+        return Array(String(decoding: data, as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: true).suffix(limit))
     }
 
     /// 删掉超过保留期的归档。

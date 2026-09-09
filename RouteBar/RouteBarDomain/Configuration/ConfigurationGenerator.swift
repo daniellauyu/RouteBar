@@ -62,8 +62,8 @@ public enum ConfigurationGenerator {
             ["type": "mixed", "tag": tag("in", index), "listen": "127.0.0.1",
              "listen_port": item.localPort, "set_system_proxy": false]
         }
-        let outbounds = mapped.enumerated().map { index, item in
-            outbound(for: item.node, tag: tag("out", index))
+        let outbounds = try mapped.enumerated().map { index, item in
+            try outbound(for: item.node, tag: tag("out", index))
         }
         // 入站与出站一一绑定：第 N 个端口只走第 N 个节点，绝不串台。
         let rules: [[String: Any]] = mapped.indices.map { index in
@@ -112,7 +112,7 @@ public enum ConfigurationGenerator {
             .joined(separator: "\n") + "\n"
     }
 
-    private nonisolated static func outbound(for node: ProxyNode, tag: String) -> [String: Any] {
+    private nonisolated static func outbound(for node: ProxyNode, tag: String) throws -> [String: Any] {
         var result: [String: Any] = [
             "type": node.protocolType == .shadowsocks ? "shadowsocks" : node.protocolType.rawValue,
             "tag": tag,
@@ -157,13 +157,30 @@ public enum ConfigurationGenerator {
         }
 
         if node.protocolType != .shadowsocks && node.protocolType != .hysteria2,
-           let transport = transport(for: node) {
+           let transport = try transport(for: node) {
             result["transport"] = transport
         }
         return result
     }
 
-    private nonisolated static func transport(for node: ProxyNode) -> [String: Any]? {
+    /// 解析订阅与生成既有缓存配置共用校验，未知传输不能静默变成 TCP。
+    public nonisolated static func validateTransport(for node: ProxyNode) throws {
+        guard node.protocolType != .shadowsocks && node.protocolType != .hysteria2 else { return }
+        _ = try transport(for: node)
+    }
+
+    public enum ConfigurationError: LocalizedError, Equatable {
+        case unsupportedTransport(nodeName: String, transport: String)
+
+        public var errorDescription: String? {
+            switch self {
+            case .unsupportedTransport(let name, let transport):
+                "节点「\(name)」使用暂不支持的传输方式「\(transport)」，未应用本次配置"
+            }
+        }
+    }
+
+    private nonisolated static func transport(for node: ProxyNode) throws -> [String: Any]? {
         switch node.transport.lowercased() {
         case "", "tcp", "none":
             return nil
@@ -182,8 +199,7 @@ public enum ConfigurationGenerator {
             if !node.transportHost.isEmpty { result["host"] = [node.transportHost] }
             return result
         default:
-            // 保留节点；未知传输不写进配置，避免生成 sing-box 不认识的 transport 类型。
-            return nil
+            throw ConfigurationError.unsupportedTransport(nodeName: node.name, transport: node.transport)
         }
     }
 

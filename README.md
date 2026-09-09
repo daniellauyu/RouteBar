@@ -175,10 +175,11 @@ xcodebuild build \
 
 ## 测试
 
-Domain 层是纯逻辑，用 SwiftPM 直接跑，不必启动整个 app：
+SwiftPM 覆盖 Domain 与 Core，使用临时目录验证持久化与日志、受控子进程验证超时，不必启动应用：
 
 ```sh
 swift test
+node scripts/test-web-drafts.js
 ```
 
 ## 发布

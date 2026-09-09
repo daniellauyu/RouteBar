@@ -1,5 +1,6 @@
 import os
 import Foundation
+import Darwin
 
 public struct CommandResult: Sendable {
     public let exitCode: Int32
@@ -115,14 +116,34 @@ public struct CommandRunner: Sendable {
         // 必须在 waitUntilExit 之前开始读：输出超过管道缓冲区时子进程会阻塞在写上，
         // 而我们阻塞在等它退出，双方互等。
         let box = DataBox()
+        let stopReading = AtomicFlag()
         let group = DispatchGroup()
         group.enter()
         DispatchQueue.global(qos: .userInitiated).async {
             let handle = pipe.fileHandleForReading
+            let descriptor = handle.fileDescriptor
+            _ = fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) | O_NONBLOCK)
+            defer {
+                try? handle.close()
+                group.leave()
+            }
             var pending = Data()
-            while true {
-                let chunk = handle.readData(ofLength: 64 * 1024)
-                if chunk.isEmpty { break }
+            var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+            while !stopReading.value {
+                var event = pollfd(fd: descriptor, events: Int16(POLLIN | POLLHUP), revents: 0)
+                let ready = poll(&event, 1, 100)
+                if ready < 0 {
+                    if errno == EINTR { continue }
+                    break
+                }
+                if ready == 0 { continue }
+                let count = Darwin.read(descriptor, &buffer, buffer.count)
+                if count == 0 { break }
+                if count < 0 {
+                    if errno == EAGAIN || errno == EINTR { continue }
+                    break
+                }
+                let chunk = Data(buffer.prefix(count))
                 box.append(chunk)
                 guard let onLine else { continue }
                 // 按行切分再回调：管道给的是任意大小的字节块，一行可能被劈成两块，
@@ -136,17 +157,24 @@ public struct CommandRunner: Sendable {
                     pending.removeSubrange(...separator)
                     if !line.isEmpty { onLine(line) }
                 }
+                // 畸形输出可能永不换行，避免进度缓存无限增长。
+                if pending.count > 64 * 1024 { pending = Data(pending.suffix(64 * 1024)) }
             }
             if let onLine {
                 let tail = String(decoding: pending, as: UTF8.self).trimmingCharacters(in: .whitespaces)
                 if !tail.isEmpty { onLine(tail) }
             }
-            group.leave()
         }
 
         process.waitUntilExit()
-        group.wait()
         watchdog.cancel()
+        // 孙进程可能继承管道并继续持有写端。主命令结束后只给两秒排空，
+        // 然后由非阻塞读取循环自行关闭句柄，不能无限等待 EOF。
+        if group.wait(timeout: .now() + 2) == .timedOut {
+            stopReading.set()
+            _ = group.wait(timeout: .now() + 1)
+            throw CommandError.timedOut(executable + "（输出管道未关闭）")
+        }
 
         if timedOut.value {
             CoreLog.command.error("执行超时 \(executable, privacy: .public)")
@@ -175,6 +203,10 @@ private final class DataBox: @unchecked Sendable {
     nonisolated func append(_ data: Data) {
         lock.lock(); defer { lock.unlock() }
         storage.append(data)
+        // 命令结果只保留末尾 4 MB，实时行回调仍接收全部正常输出。
+        if storage.count > 4 * 1024 * 1024 {
+            storage = Data(storage.suffix(4 * 1024 * 1024))
+        }
     }
 }
 

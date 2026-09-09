@@ -3,6 +3,23 @@ import Testing
 @testable import RouteBarDomain
 
 struct ConfigurationGeneratorTests {
+    @Test func rejectsUnsupportedTransportFromPersistedNodes() {
+        var node = makeNode("Unsupported", "example.com")
+        node.transport = "xhttp"
+        #expect(throws: ConfigurationGenerator.ConfigurationError.unsupportedTransport(
+            nodeName: "Unsupported", transport: "xhttp")) {
+            try ConfigurationGenerator.generate(nodes: [node])
+        }
+    }
+
+    @Test func disabledUnsupportedNodeDoesNotPreventGeneration() throws {
+        var node = makeNode("Unsupported", "example.com")
+        node.transport = "xhttp"
+        node.isEnabled = false
+        let generated = try ConfigurationGenerator.generate(nodes: [node, makeNode("TCP", "tcp.example.com")])
+        #expect(generated.nodes.count == 1)
+    }
+
     private func makeNode(_ name: String, _ server: String) -> ProxyNode {
         ProxyNode(id: server, name: name, server: server, serverPort: 443,
                   uuid: "11111111-1111-1111-1111-111111111111", flow: "xtls-rprx-vision",

@@ -31,7 +31,7 @@ public struct RuntimeManager: Sendable {
         guard let result = try? await runner.run("/bin/launchctl", ["kickstart", "-k", paths.launchctlTarget]) else {
             return .failed("无法调用 launchctl")
         }
-        if result.succeeded { return .running }
+        if result.succeeded { return await confirmStarted() }
         guard LaunchCtlStatusParser.indicatesServiceNotLoaded(exitCode: result.exitCode, output: result.output) else {
             return .failed(result.output.trimmed())
         }
@@ -74,7 +74,22 @@ public struct RuntimeManager: Sendable {
         }
         guard kickstart.succeeded else { return .failed(kickstart.output.trimmed()) }
         CoreLog.configuration.notice("已重新加载并启动：\(paths.label, privacy: .public)")
-        return .running
+        return await confirmStarted()
+    }
+
+    /// launchctl 接受启动请求不等于服务已稳定运行，给运行时错误一个暴露窗口。
+    private nonisolated func confirmStarted() async -> ServiceState {
+        var lastState: ServiceState = .stopped
+        var consecutiveRunning = 0
+        for _ in 0..<6 {
+            do { try await Task.sleep(for: .milliseconds(250)) }
+            catch { return .failed("启动状态检查已取消") }
+            lastState = await status()
+            consecutiveRunning = lastState.isRunning ? consecutiveRunning + 1 : 0
+            if consecutiveRunning >= 3 { return lastState }
+        }
+        if case .failed = lastState { return lastState }
+        return .failed("启动后未能确认 sing-box 持续运行，请检查错误日志和端口占用")
     }
 
     // MARK: - 安装
@@ -201,10 +216,18 @@ public struct RuntimeManager: Sendable {
         } else if size < offset {
             start = 0
         }
-        guard start < size,
-              (try? handle.seek(toOffset: start)) != nil,
-              let data = try? handle.readToEnd() else { return ("", size) }
-        return (String(decoding: data, as: UTF8.self), size)
+        guard start < size else { return ("", start) }
+        guard (try? handle.seek(toOffset: start)) != nil,
+              let data = try? handle.read(upToCount: 1_048_576) else { return ("", offset) }
+        // 按实际读到的完整行推进。文件增长不能让旧 size 成为下轮游标，
+        // 尾部半行也必须留到下次，否则会丢失被分两次写入的日志。
+        guard let newline = data.lastIndex(of: 0x0A) else { return ("", start) }
+        let consumed = data.distance(from: data.startIndex, to: newline) + 1
+        var complete = data.prefix(consumed)
+        if start > 0, offset == 0, let firstNewline = complete.firstIndex(of: 0x0A) {
+            complete = complete.suffix(from: complete.index(after: firstNewline))
+        }
+        return (String(decoding: complete, as: UTF8.self), start + UInt64(consumed))
     }
 
     /// 清空 sing-box 的两份日志。

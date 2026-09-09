@@ -1,5 +1,6 @@
 import os
 import Foundation
+import Darwin
 
 /// 替用户装一份 sing-box。
 ///
@@ -170,10 +171,11 @@ public struct SingBoxInstaller: Sendable {
             throw InstallError.extractionFailed("压缩包里没有 \(asset.pathInArchive)")
         }
 
+        // 先在临时目录完成签名和启动验证，失败时保留当前可用版本。
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: extracted.path)
+        try await makeRunnable(extracted)
+        let version = try await Self.reportedVersion(of: extracted.path)
         let destination = try install(extracted)
-        try await makeRunnable(destination)
-
-        let version = try await Self.reportedVersion(of: destination.path)
         CoreLog.configuration.notice("已下载安装 sing-box：\(destination.path, privacy: .public)")
         return Outcome(binaryPath: destination.path, version: version, method: .download(asset.downloadURL))
     }
@@ -240,11 +242,15 @@ public struct SingBoxInstaller: Sendable {
     private nonisolated func install(_ binary: URL) throws -> URL {
         let destination = managedBinary
         try FileManager.default.createDirectory(at: managedDirectory, withIntermediateDirectories: true)
-        // 覆盖安装：旧的那份此刻可能正被 launchd 拉起来的进程占用，先删再放。
-        // 直接覆盖会让运行中的进程读到写了一半的文件。
-        try? FileManager.default.removeItem(at: destination)
-        try FileManager.default.moveItem(at: binary, to: destination)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destination.path)
+        // 同一目录内暂存，再用 rename 原子替换：任一步失败都保留旧文件，
+        // 运行中的进程继续持有原 inode，不会读到只写了一半的新版本。
+        let staged = managedDirectory.appendingPathComponent(".sing-box-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: staged) }
+        try FileManager.default.copyItem(at: binary, to: staged)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: staged.path)
+        guard rename(staged.path, destination.path) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
         return destination
     }
 

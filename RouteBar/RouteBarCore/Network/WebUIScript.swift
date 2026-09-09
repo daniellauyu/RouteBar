@@ -20,6 +20,8 @@ enum WebUIScript {
     let langPreference = 'auto';
     /* 正在编辑的订阅 id。轮询期间要避开它，否则 8 秒一到就把填了一半的表单刷掉。 */
     let editingId = null;
+    const subscriptionDrafts = new Map();
+    let namingDirty = false;
     /* 目标可达的上一次结果。只活在这一页，刷新快照不会动它。 */
     let probeResponse = null;
     let probing = false;
@@ -138,10 +140,16 @@ enum WebUIScript {
     async function call(path, method = 'GET', body) {
       if (busy) return null;
       busy = true;
-      document.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+      const blockedButtons = [...document.querySelectorAll('button')].filter((b) =>
+        !b.closest('nav') && !b.hasAttribute('data-tab') &&
+        !['btn-copy-url', 'btn-copy-line'].includes(b.id) && !b.disabled);
+      blockedButtons.forEach((b) => { b.disabled = true; });
+      const controller = new AbortController();
+      const deadline = setTimeout(() => controller.abort(), method === 'GET' ? 30000 : 600000);
       try {
         const response = await fetch(API + path, {
           method,
+          signal: controller.signal,
           headers: { 'Content-Type': 'application/json' },
           body: body === undefined ? undefined : JSON.stringify(body),
         });
@@ -150,11 +158,15 @@ enum WebUIScript {
         if (!response.ok) throw new Error((data && data.error) || ('HTTP ' + response.status));
         return data;
       } catch (error) {
-        toast(error.message || t('common.requestFailed'));
+        toast(error.name === 'AbortError'
+          ? (lang === 'en' ? 'Request timed out; the operation may still be running. Refresh its status before retrying.'
+                           : '请求等待超时，操作可能仍在后台执行，请先刷新状态再重试。')
+          : (error.message || t('common.requestFailed')));
         return null;
       } finally {
+        clearTimeout(deadline);
         busy = false;
-        document.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+        blockedButtons.forEach((b) => { b.disabled = false; });
       }
     }
 
@@ -556,7 +568,7 @@ enum WebUIScript {
     function renderNaming(naming) {
       const input = $('naming-template');
       /* 轮询正好落在用户输入到一半时，覆盖输入框等于把人打断。聚焦时只更新说明。 */
-      if (document.activeElement !== input) input.value = naming.template;
+      if (!namingDirty && document.activeElement !== input) input.value = naming.template;
       input.placeholder = naming.defaultTemplate;
       $('naming-preview').textContent = naming.preview.join(' · ');
       $('naming-help').textContent = t('naming.help') +
@@ -566,6 +578,8 @@ enum WebUIScript {
     async function saveNaming(template) {
       const data = await call('/naming', 'POST', { template });
       if (data) {
+        namingDirty = false;
+        $('naming-template').value = data.naming.template;
         $('naming-result').hidden = true;
         render(data);
         toast(t('naming.saved'));
@@ -663,31 +677,40 @@ enum WebUIScript {
     }
 
     function subscriptionEditor(sub, index) {
+      const draft = subscriptionDrafts.get(sub.id) || {
+        name: sub.name, url: '', note: sub.note || '',
+        interval: String(sub.updateIntervalHours), template: sub.nodeNameTemplate || '',
+      };
+      subscriptionDrafts.set(sub.id, draft);
       const box = element('div', 'item');
       const body = element('div', 'grow');
       body.append(element('div', null, t('sb.editing', sub.name)));
 
       const name = element('input');
-      name.value = sub.name;
+      name.value = draft.name;
       name.required = true;
 
       const url = element('input');
       url.type = 'url';
+      url.value = draft.url;
       /* 存下来的地址含机场凭据，只在钥匙串里，网页从不显示它。
          因此空值只能理解成「不改」，不能当成「清空」。 */
       url.placeholder = t('sb.urlKeepHint');
 
       const note = element('input');
-      note.value = sub.note || '';
+      note.value = draft.note;
 
       const interval = element('input');
       interval.type = 'number';
       interval.min = '1';
       interval.max = '168';
-      interval.value = String(sub.updateIntervalHours);
+      interval.value = draft.interval;
 
       const template = element('input');
-      template.value = sub.nodeNameTemplate || '';
+      template.value = draft.template;
+      for (const [key, input] of Object.entries({ name, url, note, interval, template })) {
+        input.oninput = () => { draft[key] = input.value; };
+      }
       template.placeholder = (snapshot && snapshot.naming.template) || t('sb.templatePlaceholder');
 
       const grid = element('div', 'editor');
@@ -711,6 +734,7 @@ enum WebUIScript {
         if (typed) payload.url = typed;
         const data = await call('/subscriptions', 'POST', payload);
         if (data) {
+          subscriptionDrafts.delete(sub.id);
           editingId = null;
           render(data);
           toast(t('sb.saved'));
@@ -718,7 +742,11 @@ enum WebUIScript {
       };
 
       const cancel = element('button', 'ghost small', t('common.cancel'));
-      cancel.onclick = () => { editingId = null; renderSubscriptions(snapshot.subscriptions); };
+      cancel.onclick = () => {
+        subscriptionDrafts.delete(sub.id);
+        editingId = null;
+        renderSubscriptions(snapshot.subscriptions);
+      };
 
       const actions = element('div', 'row');
       actions.append(save, cancel, element('span', 'dim', t('sb.saveHint')));
@@ -776,7 +804,7 @@ enum WebUIScript {
       if (event.key === 'Enter') testNaming($('naming-template').value.trim());
     };
     /* 模板一改，上一次的试跑结果就不再对应输入框里的内容了，留着只会看错。 */
-    $('naming-template').oninput = () => { $('naming-result').hidden = true; };
+    $('naming-template').oninput = () => { namingDirty = true; $('naming-result').hidden = true; };
 
     $('add-form').onsubmit = async (event) => {
       event.preventDefault();

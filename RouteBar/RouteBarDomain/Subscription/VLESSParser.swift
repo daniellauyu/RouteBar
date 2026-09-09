@@ -17,6 +17,8 @@ public enum SubscriptionParser {
         let parsed = body.components(separatedBy: .newlines).compactMap {
             parseURI($0, sourceID: sourceID)
         }
+        // 保留原订阅的已安装节点，让调用方明确报告不支持的传输，避免把它当普通 TCP 安装。
+        for node in parsed { try ConfigurationGenerator.validateTransport(for: node) }
         return NodeCatalog.assignEntryIDs(parsed, sourceID: sourceID)
     }
 

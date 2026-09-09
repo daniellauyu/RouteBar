@@ -18,6 +18,9 @@ public actor LocalHTTPServer {
     private var listener: NWListener?
     private var handler: Handler?
     private var port: Int = 0
+    private var connections: [UUID: NWConnection] = [:]
+    private var connectionDeadlines: [UUID: Task<Void, Never>] = [:]
+    private let maximumConnections = 64
 
     /// 每建一个监听器 +1。
     ///
@@ -83,7 +86,7 @@ public actor LocalHTTPServer {
             let listener = try NWListener(using: parameters)
             self.listener = listener
             listener.newConnectionHandler = { [weak self] connection in
-                Task { await self?.serve(connection) }
+                Task { await self?.serve(connection, generation: generation) }
             }
             listener.stateUpdateHandler = { [weak self] state in
                 Task { await self?.apply(state, generation: generation) }
@@ -109,6 +112,9 @@ public actor LocalHTTPServer {
             lastError = nil
             CoreLog.subscription.notice("本地服务已监听 127.0.0.1:\(self.port)")
         case .failed(let error):
+            listener?.cancel()
+            listener = nil
+            self.generation += 1
             isRunning = false
             // 端口被占用是最常见的失败，说清楚比抛一个 NWError 代码有用。
             lastError = error.errorCode == 48
@@ -125,6 +131,10 @@ public actor LocalHTTPServer {
     public func stop() {
         listener?.cancel()
         listener = nil
+        for connection in connections.values { connection.cancel() }
+        for deadline in connectionDeadlines.values { deadline.cancel() }
+        connections.removeAll()
+        connectionDeadlines.removeAll()
         isRunning = false
         // 之后到达的状态都属于上一代，作废掉。
         generation += 1
@@ -135,16 +145,44 @@ public actor LocalHTTPServer {
 
     // MARK: - 连接处理
 
-    private func serve(_ connection: NWConnection) {
+    private func serve(_ connection: NWConnection, generation: UInt64) {
+        guard generation == self.generation, connections.count < maximumConnections else { connection.cancel(); return }
+        let id = UUID()
+        connections[id] = connection
+        connection.stateUpdateHandler = { [weak self] state in
+            if case .cancelled = state { Task { await self?.finishConnection(id) } }
+            if case .failed = state { Task { await self?.finishConnection(id) } }
+        }
+        // A complete request must arrive promptly; handlers may legitimately run longer.
+        connectionDeadlines[id] = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(15)) } catch { return }
+            await self?.finishConnection(id)
+        }
         connection.start(queue: .global(qos: .userInitiated))
-        receive(connection, buffer: Data())
+        receive(connection, id: id, buffer: Data())
+    }
+
+    private func finishConnection(_ id: UUID) {
+        connectionDeadlines.removeValue(forKey: id)?.cancel()
+        connections.removeValue(forKey: id)?.cancel()
+    }
+
+    private func beginResponse(_ request: HTTPRequest, connection: NWConnection, id: UUID) async {
+        guard connections[id] != nil else { return }
+        connectionDeadlines.removeValue(forKey: id)?.cancel()
+        // Bound abandoned long-running API connections, too.
+        connectionDeadlines[id] = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(600)) } catch { return }
+            await self?.finishConnection(id)
+        }
+        await respond(to: request, on: connection)
     }
 
     /// 递归收取直到攒够一条完整请求。
     ///
     /// 不能只 receive 一次：请求头会被拆包，带 body 的 POST 更是必然分两段到达。
     /// 单次读取的写法在 body 稍大时会随机地把 JSON 截断成畸形请求。
-    private func receive(_ connection: NWConnection, buffer: Data) {
+    private func receive(_ connection: NWConnection, id: UUID, buffer: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
             guard let self else { connection.cancel(); return }
             var accumulated = buffer
@@ -157,7 +195,7 @@ public actor LocalHTTPServer {
 
             switch HTTPRequest.parse(accumulated) {
             case .complete(let request):
-                Task { await self.respond(to: request, on: connection) }
+                Task { await self.beginResponse(request, connection: connection, id: id) }
             case .invalid:
                 Self.send(HTTPResponse.badRequest, on: connection, includeBody: true)
             case .incomplete:
@@ -165,7 +203,7 @@ public actor LocalHTTPServer {
                 if isComplete {
                     connection.cancel()
                 } else {
-                    Task { await self.receive(connection, buffer: accumulated) }
+                    Task { await self.receive(connection, id: id, buffer: accumulated) }
                 }
             }
         }

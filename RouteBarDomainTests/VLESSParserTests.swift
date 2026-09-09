@@ -3,6 +3,14 @@ import Testing
 @testable import RouteBarDomain
 
 struct VLESSParserTests {
+    @Test func unsupportedTransportFailsExplicitlyInsteadOfBecomingTCP() {
+        let uri = "vless://11111111-1111-1111-1111-111111111111@example.com:443?type=xhttp#Unsupported"
+        #expect(throws: ConfigurationGenerator.ConfigurationError.unsupportedTransport(
+            nodeName: "Unsupported", transport: "xhttp")) {
+            try SubscriptionParser.parseSubscription(Data(uri.utf8), sourceID: sourceID)
+        }
+    }
+
     private let sourceID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
     private let uri = "vless://11111111-1111-1111-1111-111111111111@hk.example.com:443?security=reality&type=tcp&flow=xtls-rprx-vision&sni=www.apple.com&fp=chrome&pbk=public-key&sid=abcd#香港%2001"
 
