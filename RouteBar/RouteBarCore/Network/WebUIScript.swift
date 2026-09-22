@@ -784,6 +784,7 @@ enum WebUIScript {
         logs: data.logs || [],
         warnings: data.warnings || [],
         nodeCount: data.nodeCount,
+        keptCount: data.keptCount,
         ms: data.milliseconds,
       };
       /* 新结果回到第一页：行数变了之后停在第 3 页上通常没有意义。
@@ -807,13 +808,15 @@ enum WebUIScript {
            而写歪的表现就是 Surge 里静静少几个节点，没有任何提示。 */
         const head = element('div', 'dim');
         head.append(element('strong', null,
-          t('naming.scriptKept', view.rows.length, view.nodeCount)));
+          t('naming.scriptKept', view.keptCount, view.nodeCount)));
         if (view.filtered.length) {
           head.append(document.createTextNode('   '));
           head.append(element('span', 'tag warn',
             t('naming.scriptFiltered', view.filtered.length, view.nodeCount)));
         }
-        head.append(document.createTextNode('   ' + t('naming.scriptTook', view.ms)));
+        /* 输出行数单列：脚本合成条目时它会大于保留的节点数，而这正是 Surge 收到的行数。 */
+        head.append(document.createTextNode('   ' + t('naming.scriptLines', view.rows.length)
+                                            + '   ' + t('naming.scriptTook', view.ms)));
         parts.push(head);
       }
       for (const warning of view.warnings) parts.push(element('div', 'console warn', warning));

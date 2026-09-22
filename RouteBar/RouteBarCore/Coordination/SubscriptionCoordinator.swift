@@ -382,7 +382,7 @@ public actor SubscriptionCoordinator {
             return NamingScriptPreview(rows: rows, filtered: filtered,
                                        logs: result.logs, warnings: result.warnings,
                                        failure: nil, milliseconds: Int(result.duration * 1000),
-                                       nodeCount: proxies.count)
+                                       nodeCount: proxies.count, keptCount: emitted.count)
         } catch {
             let reason = (error as? NodeScriptError)?.errorDescription ?? error.localizedDescription
             return NamingScriptPreview(rows: [], logs: [], warnings: [], failure: reason,

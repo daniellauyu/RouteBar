@@ -402,6 +402,8 @@ public struct APINamingScriptPreview: nonisolated Codable, Sendable {
     public var failure: String?
     public var milliseconds: Int
     public var nodeCount: Int
+    /// 有多少个输入节点进了输出。与 `rows.count` 不同——脚本可以合成条目。
+    public var keptCount: Int
 
     public nonisolated init(_ preview: NamingScriptPreview) {
         rows = preview.rows.map {
@@ -415,6 +417,7 @@ public struct APINamingScriptPreview: nonisolated Codable, Sendable {
         failure = preview.failure
         milliseconds = preview.milliseconds
         nodeCount = preview.nodeCount
+        keptCount = preview.keptCount
     }
 }
 

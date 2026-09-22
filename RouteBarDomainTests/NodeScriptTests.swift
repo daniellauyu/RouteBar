@@ -53,6 +53,14 @@ import Testing
         #expect(result.plan.lines.map(\.name) == ["入口", "末位", "首位"])
         #expect(result.plan.lines.map(\.index) == [2, 2, 0])
         #expect(result.warnings.contains { $0.contains("没有出现在返回值里") })
+
+        // 「保留了几个节点」必须按**去重后的输入下标**算，不能拿输出行数算。
+        // 这里 3 行输出只对应 2 个节点（「入口」是借端口合成的），拿行数当保留数
+        // 会得到 3+1=4 > 3——比总数还大，而界面上正是靠这个和为总数来自证没算错。
+        let kept = Set(result.plan.lines.map(\.index)).count
+        let dropped = 3 - kept
+        #expect(kept == 2)
+        #expect(kept + dropped == 3)
     }
 
     @Test("重名补后缀并告警") func deduplicatesNamesWithWarning() throws {

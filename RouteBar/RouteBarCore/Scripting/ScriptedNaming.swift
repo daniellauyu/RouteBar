@@ -119,11 +119,18 @@ public struct NamingScriptPreview: Sendable {
     /// 跑挂了的原因。非 nil 时 `rows` 是空的。
     public let failure: String?
     public let milliseconds: Int
-    /// 交给脚本的节点数。`rows.count` 与它不等是正常的——脚本可以增删。
+    /// 交给脚本的节点数。
     public let nodeCount: Int
+    /// **有多少个输入节点出现在了输出里**，与 `rows.count` 是两回事。
+    ///
+    /// 脚本可以合成条目（`【INFO】查看订阅信息` 就是借第一条信息节点的端口凭空多出来的
+    /// 一行），也可以让一个节点出现多次。拿 `rows.count` 当「保留了几个节点」会算出
+    /// 比总数还大的数——而 `keptCount + filtered.count` 必须恰好等于 `nodeCount`，
+    /// 那是这个界面唯一能自证没算错的地方。
+    public let keptCount: Int
 
     public nonisolated init(rows: [Row], filtered: [Row] = [], logs: [String], warnings: [String],
-                            failure: String?, milliseconds: Int, nodeCount: Int) {
+                            failure: String?, milliseconds: Int, nodeCount: Int, keptCount: Int = 0) {
         self.rows = rows
         self.filtered = filtered
         self.logs = logs
@@ -131,5 +138,6 @@ public struct NamingScriptPreview: Sendable {
         self.failure = failure
         self.milliseconds = milliseconds
         self.nodeCount = nodeCount
+        self.keptCount = keptCount
     }
 }
