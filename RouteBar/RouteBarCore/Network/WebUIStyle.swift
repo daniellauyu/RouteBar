@@ -163,6 +163,17 @@ enum WebUIStyle {
     /* 地区表一行一条规则，顺序即优先级——等宽字体才看得清哪些行对齐、哪行写歪了。
        只允许竖向拉伸：横向拉会把卡片撑破。 */
     textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; line-height:1.65; resize:vertical; }
+    /* 脚本编辑器：不换行，长行横向滚动。自动换行会把缩进结构打乱，
+       而缩进正是读一段 JS 时最先看的东西。 */
+    textarea.code { white-space:pre; overflow-wrap:normal; overflow-x:auto; tab-size:2; }
+    /* 脚本的 console 输出与报错。等宽 + 可滚动，保留换行（JS 的栈是多行的）。 */
+    .console {
+      font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; line-height:1.6;
+      white-space:pre-wrap; word-break:break-word; max-height:220px; overflow:auto;
+      padding:9px 11px; border-radius:9px; background:var(--surface); border:1px solid var(--line);
+    }
+    .console.bad { color:var(--bad); border-color:color-mix(in srgb,var(--bad) 40%,var(--line)); }
+    .console.warn { color:var(--warn); border-color:color-mix(in srgb,var(--warn) 45%,var(--line)); }
 
     /* ---------- 通用排版 ---------- */
     .row { display:flex; align-items:center; gap:11px; }

@@ -6,11 +6,18 @@ public enum NodeNamingStyle: String, Codable, CaseIterable, Sendable {
     case template
     /// 规范化：把机场原始名压成 `【来源】地区NN`，并把混在节点里的订阅信息单独归类。
     case normalized
+    /// 跑用户自己写的 JS `operator`，见 `NodeScript`。
+    ///
+    /// 规范化那一套是把流程写死在代码里，只有地区表可配；脚本是把整个流程交出去。
+    /// 两者并存而不是用脚本取代规范化：绝大多数人不需要写脚本，而一个空白的编辑器
+    /// 比一张填好的地区表难上手得多。
+    case script
 
     public nonisolated var label: String {
         switch self {
         case .template: "模板"
         case .normalized: "规范化"
+        case .script: "脚本"
         }
     }
 }
@@ -295,20 +302,36 @@ public struct NormalizationInput: Sendable, Equatable {
 
 /// 一次规范化的结果。
 public struct NormalizationPlan: Sendable, Equatable {
+    /// 输出的一行：一个名字，绑定到某个输入下标（端口从那里取）。
+    public struct Line: Sendable, Equatable {
+        public let name: String
+        /// 输入下标。**同一个下标可以出现在多行里**——合成的信息入口就是借第一条
+        /// 信息节点的连接参数，两行指向同一个端口。
+        public let index: Int
+
+        public nonisolated init(name: String, index: Int) {
+            self.name = name
+            self.index = index
+        }
+    }
+
     /// 与输入**逐位对齐**的输出名，含不输出的那些。
     ///
-    /// 必须逐位对齐：调用方拿它去配端口，错一位整份配置就串台。被排除的条目也给名字，
-    /// 界面要显示「这个节点叫什么、为什么没进 Surge」。
+    /// 界面按这个显示「这个节点叫什么、有没有进 Surge」。真正决定输出的是 `lines`：
+    /// 名字与端口的绑定放在那里，而不是靠两个数组的下标默契——错一位整份配置串台，
+    /// 而这种错位没有任何征兆。
     public let names: [String]
-    /// 输出顺序，元素是输入下标。普通节点在前、信息节点在后，被排除的不出现。
-    public let order: [Int]
-    /// 合成的信息入口要借哪个下标的连接参数。一条信息节点都没有时是 nil。
-    public let infoEntryIndex: Int?
+    /// 输出的全部行，顺序即 Surge 里的顺序。不输出的条目不出现在这里。
+    public let lines: [Line]
 
-    public nonisolated init(names: [String], order: [Int], infoEntryIndex: Int?) {
+    public nonisolated init(names: [String], lines: [Line]) {
         self.names = names
-        self.order = order
-        self.infoEntryIndex = infoEntryIndex
+        self.lines = lines
+    }
+
+    /// 便利构造：一批下标按原名直接成行，不重复、不改名。
+    public nonisolated init(names: [String], order: [Int]) {
+        self.init(names: names, lines: order.map { Line(name: names[$0], index: $0) })
     }
 }
 
@@ -373,9 +396,18 @@ extension NodeNormalization {
             .sorted { ($0.rank, $0.order, $0.index) < ($1.rank, $1.order, $1.index) }
             .map(\.index)
 
-        return NormalizationPlan(names: names,
-                                 order: normalOrder + sortedInfo,
-                                 infoEntryIndex: sortedInfo.first)
+        var lines = normalOrder.map { NormalizationPlan.Line(name: names[$0], index: $0) }
+        // 信息入口：Surge 不接受只有名字、没有连接参数的策略项，所以借第一条信息节点的端口。
+        //
+        // 为什么要多这一条：`💡 订阅信息` 组按 `^【INFO】` 收节点，而 Surge 的 select 组
+        // 默认选中第一项——没有这条入口时，默认选中的会是「更新时间：…」这种连不通的假节点，
+        // 一旦有人手滑把这个组设成某条规则的出口，流量就直接断在那里。
+        if let first = sortedInfo.first {
+            lines.append(NormalizationPlan.Line(name: infoEntryName, index: first))
+        }
+        lines += sortedInfo.map { NormalizationPlan.Line(name: names[$0], index: $0) }
+
+        return NormalizationPlan(names: names, lines: lines)
     }
 
     /// 不输出的条目在界面上叫什么。带上原名，否则用户只看到「少了一个节点」却不知道少了哪个。

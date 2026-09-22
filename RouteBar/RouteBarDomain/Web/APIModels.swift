@@ -361,6 +361,63 @@ public struct APINamingInput: nonisolated Codable, Sendable {
     }
 }
 
+/// `GET /api/naming/script` 的响应。
+///
+/// 脚本不放进快照：快照每秒轮询一次，而脚本动辄几百行，跟着轮询走等于每秒
+/// 白传一遍，编辑时还会被覆盖。单独一条路由按需取。
+public struct APINamingScript: nonisolated Codable, Sendable {
+    public var script: String
+    /// 新建时的骨架，空脚本时网页拿它填进编辑器。
+    public var template: String
+    /// 执行时限（秒），显示用。
+    public var timeout: Double
+
+    public nonisolated init(script: String) {
+        self.script = script
+        template = NodeScript.template
+        timeout = NodeScript.defaultTimeout
+    }
+}
+
+public struct APINamingScriptInput: nonisolated Codable, Sendable {
+    public var script: String
+
+    public nonisolated init(script: String) {
+        self.script = script
+    }
+}
+
+/// `POST /api/naming/script/preview` 的响应。
+public struct APINamingScriptPreview: nonisolated Codable, Sendable {
+    public struct Row: nonisolated Codable, Sendable {
+        public var name: String
+        public var outputName: String
+        public var localPort: Int
+    }
+
+    public var rows: [Row]
+    public var filtered: [Row]
+    public var logs: [String]
+    public var warnings: [String]
+    public var failure: String?
+    public var milliseconds: Int
+    public var nodeCount: Int
+
+    public nonisolated init(_ preview: NamingScriptPreview) {
+        rows = preview.rows.map {
+            Row(name: $0.name, outputName: $0.outputName, localPort: $0.localPort)
+        }
+        filtered = preview.filtered.map {
+            Row(name: $0.name, outputName: $0.outputName, localPort: $0.localPort)
+        }
+        logs = preview.logs
+        warnings = preview.warnings
+        failure = preview.failure
+        milliseconds = preview.milliseconds
+        nodeCount = preview.nodeCount
+    }
+}
+
 /// `POST /api/naming/regions` 的请求体：整张地区表一次性替换。
 ///
 /// 整表替换而不是逐条增删：顺序就是优先级，逐条改就要再定义一套「插到哪里」的语义，

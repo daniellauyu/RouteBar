@@ -23,6 +23,15 @@ enum WebUIScript {
     const subscriptionDrafts = new Map();
     let namingDirty = false;
     let regionsDirty = false;
+    let scriptDirty = false;
+    let scriptLoaded = false;
+    let scriptTimer = null;
+    /* 边打字边跑时，慢的那次可能后返回。带序号，过期的响应直接丢掉，
+       否则画面会闪回到几次之前的结果。 */
+    let scriptSeq = 0;
+    /* 上一次跑通的行。语法写到一半必然报错，这时把已有结果全清掉会让编辑器下面
+       一片空白——留着上次的，只在顶上标一行「这是旧结果」。 */
+    let scriptLastRows = null;
     /* 目标可达的上一次结果。只活在这一页，刷新快照不会动它。 */
     let probeResponse = null;
     let probing = false;
@@ -599,15 +608,26 @@ enum WebUIScript {
          选项文字会一直停在进来时那门语言上。 */
       const style = $('naming-style');
       style.replaceChildren(option('template', t('naming.style.template')),
-                            option('normalized', t('naming.style.normalized')));
+                            option('normalized', t('naming.style.normalized')),
+                            option('script', t('naming.style.script')));
       style.value = naming.style;
-      const normalized = naming.style === 'normalized';
+      const scripted = naming.style === 'script';
+      /* 地区表在脚本模式下仍然有用：RouteBar 会把认好的地区作为 p.region 交给脚本。
+         所以两块可以同时显示，不是二选一。 */
+      const normalized = naming.style === 'normalized' || scripted;
       /* 规范化模式下模板不参与生成。留着能看但禁掉，免得有人改半天发现输出没变。 */
       input.disabled = normalized;
       $('btn-naming-reset').disabled = normalized;
-      $('naming-help').textContent = normalized
-        ? t('naming.normalizedHelp')
-        : t('naming.help') + naming.placeholders.map((p) => p.token + ' ' + p.summary).join('、');
+      $('naming-help').textContent = scripted
+        ? t('naming.scriptHelp')
+        : normalized
+          ? t('naming.normalizedHelp')
+          : t('naming.help') + naming.placeholders.map((p) => p.token + ' ' + p.summary).join('、');
+
+      $('naming-script').hidden = !scripted;
+      /* 脚本按需取一次：它不在快照里（几百行跟着每秒轮询走纯属浪费，
+         而且会在编辑到一半时被覆盖）。 */
+      if (scripted && !scriptLoaded) { scriptLoaded = true; loadScript(); }
 
       $('naming-regions').hidden = !normalized;
       const table = $('naming-region-table');
@@ -679,6 +699,132 @@ enum WebUIScript {
       });
       box.replaceChildren(head, ...rows);
       box.hidden = false;
+    }
+
+    /* ---------- 命名脚本 ---------- */
+
+    async function loadScript() {
+      const data = await call('/naming/script');
+      if (!data) { scriptLoaded = false; return; }
+      const box = $('naming-script-text');
+      if (!scriptDirty && document.activeElement !== box) {
+        box.value = data.script || '';
+        box.placeholder = t('naming.scriptEmpty');
+        if (box.value.trim()) runScript(true);
+      }
+      $('btn-script-template').dataset.template = data.template || '';
+      $('script-status').textContent = t('naming.scriptTimeout', data.timeout);
+    }
+
+    async function saveScript() {
+      const data = await call('/naming/script', 'POST', { script: $('naming-script-text').value });
+      if (data) {
+        scriptDirty = false;
+        render(data);
+        toast(t('naming.scriptSaved'));
+      }
+    }
+
+    /* 试跑用编辑器里**还没保存**的内容，而且跑的是当前这批真实节点——
+       脚本要处理的恰恰是机场那些花名和混在里面的信息节点，假数据试不出问题。 */
+    async function runScript(quiet) {
+      const seq = ++scriptSeq;
+      const body = { script: $('naming-script-text').value };
+      const data = quiet ? await quietPost('/naming/script/preview', body)
+                         : await call('/naming/script/preview', 'POST', body);
+      /* 过期的响应不能覆盖新结果。 */
+      if (!data || seq !== scriptSeq) return;
+      renderScriptResult(data);
+    }
+
+    /* 停止输入一小会儿之后自动重跑。
+       不在每次击键就跑：一是没必要，二是写到一半的语句必然是语法错误，
+       满屏红字比没有提示更让人分心。 */
+    function scheduleScriptPreview() {
+      clearTimeout(scriptTimer);
+      scriptTimer = setTimeout(() => runScript(true), 700);
+    }
+
+    /* 自动预览走的是安静通道：不占 busy、不禁用按钮、失败不弹 toast。
+       用 call() 的话，每敲一阵子键盘全页面的按钮就会灰一下，而且轮询会被一直挤掉。 */
+    async function quietPost(path, body) {
+      try {
+        const response = await fetch(API + path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!response.ok) return null;
+        const text = await response.text();
+        return text ? JSON.parse(text) : null;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function renderScriptResult(data) {
+      const box = $('script-result');
+      const parts = [];
+      const failed = Boolean(data.failure);
+      const rows = failed ? (scriptLastRows && scriptLastRows.rows) : data.rows;
+      const filtered = failed ? (scriptLastRows && scriptLastRows.filtered) : data.filtered;
+
+      if (failed) {
+        parts.push(element('div', 'console bad', data.failure));
+        if (rows) parts.push(element('div', 'dim', t('naming.scriptStale')));
+      } else {
+        scriptLastRows = { rows: data.rows, filtered: data.filtered };
+        /* 保留 / 被过滤 分开报数。只报「输出了几行」看不出过滤条件写歪没有——
+           而过滤写歪的表现就是 Surge 里静静少几个节点，没有任何提示。 */
+        const kept = element('div', 'dim');
+        kept.append(element('strong', null,
+          t('naming.scriptKept', data.rows.length, data.nodeCount)));
+        if (data.filtered.length) {
+          kept.append(document.createTextNode('   '));
+          kept.append(element('span', 'tag warn',
+            t('naming.scriptFiltered', data.filtered.length, data.nodeCount)));
+        }
+        kept.append(document.createTextNode('   ' + t('naming.scriptTook', data.milliseconds)));
+        parts.push(kept);
+      }
+      for (const warning of data.warnings || []) {
+        parts.push(element('div', 'console warn', warning));
+      }
+      if ((data.logs || []).length) {
+        parts.push(element('div', 'console', data.logs.join('\n')));
+      }
+
+      /* 只列前若干行：脚本调通与否前几十行就看出来了，几百行 DOM 反而让页面发顿。 */
+      appendScriptRows(parts, rows, true);
+      if (filtered && filtered.length) {
+        parts.push(element('div', 'dim', t('naming.scriptFilteredHead', filtered.length)));
+        appendScriptRows(parts, filtered, false);
+      }
+      box.replaceChildren(...parts);
+      box.hidden = false;
+    }
+
+    function appendScriptRows(parts, rows, emitted) {
+      const shown = (rows || []).slice(0, 60);
+      for (let i = 0; i < shown.length; i++) {
+        const row = shown[i];
+        const line = element('div', 'item');
+        line.append(element('span', 'idx', String(i + 1)));
+        line.append(element('div', 'grow ellipsis', row.name));
+        if (emitted) {
+          line.append(element('span', 'dim', '→'));
+          line.append(element('div', 'grow mono ellipsis', row.outputName));
+        } else {
+          /* 被过滤的没有输出名，留一格占位，两张表的列才对得齐。 */
+          line.append(element('span', 'dim', '×'));
+          line.append(element('div', 'grow dim', t('naming.scriptNotEmitted')));
+        }
+        line.append(element('span', 'tag', String(row.localPort)));
+        parts.push(line);
+      }
+      if (rows && rows.length > shown.length) {
+        parts.push(element('div', 'dim', t('naming.scriptMore', rows.length - shown.length)));
+      }
     }
 
     /* ---------- 订阅 ---------- */
@@ -883,6 +1029,25 @@ enum WebUIScript {
        （模板 / 地区表）也只有切过去之后才编辑得了。 */
     $('naming-style').onchange = () => saveNaming($('naming-template').value.trim());
     $('naming-region-table').oninput = () => { regionsDirty = true; $('naming-result').hidden = true; };
+    $('naming-script-text').oninput = () => { scriptDirty = true; scheduleScriptPreview(); };
+    $('btn-script-run').onclick = () => runScript(false);
+    $('btn-script-save').onclick = () => saveScript();
+    $('btn-script-template').onclick = (event) => {
+      $('naming-script-text').value = event.currentTarget.dataset.template || '';
+      scriptDirty = true;
+      scheduleScriptPreview();
+    };
+    /* 编辑器里按 Tab 应该缩进，而不是跳到下一个控件——写 JS 时前者是刚需。 */
+    $('naming-script-text').onkeydown = (event) => {
+      if (event.key !== 'Tab') return;
+      event.preventDefault();
+      const box = event.currentTarget;
+      const at = box.selectionStart;
+      box.value = box.value.slice(0, at) + '  ' + box.value.slice(box.selectionEnd);
+      box.selectionStart = box.selectionEnd = at + 2;
+      scriptDirty = true;
+      scheduleScriptPreview();
+    };
     $('btn-regions-save').onclick = () => saveRegions(parseRegionRules($('naming-region-table').value));
     $('btn-regions-reset').onclick = () => {
       if (!snapshot) return;

@@ -1069,7 +1069,19 @@ extension AppModel: RouteBarAPIHost {
     /// 按请求现算，不缓存字符串：缓存的那一份会在「配置未变化、跳过安装」这条分支上
     /// 停留在上一轮的内容。快照里的端口映射与即将写进 sing-box 的编号同源，现算永远对得上。
     func apiPolicyList() async -> String {
-        ConfigurationGenerator.surgePolicyLines(mappedNodes, naming: nodeNaming)
+        await coordinator.policyList()
+    }
+
+    func apiNamingScript() async -> APINamingScript {
+        APINamingScript(script: await coordinator.namingScript())
+    }
+
+    func apiSaveNamingScript(_ script: String) async {
+        apply(await coordinator.saveNamingScript(script), alertOnError: true)
+    }
+
+    func apiPreviewNamingScript(_ script: String) async -> APINamingScriptPreview {
+        APINamingScriptPreview(await coordinator.previewNamingScript(script))
     }
 
     func apiSaveSubscription(_ input: APISubscriptionInput) async throws {

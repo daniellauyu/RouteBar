@@ -111,10 +111,12 @@ public struct NodeNaming: Sendable, Equatable {
     public nonisolated func plan(for mapped: [PortMappedNode], now: Date = .now) -> NormalizationPlan {
         switch style {
         case .template:
-            return NormalizationPlan(names: templateNames(for: mapped),
-                                     order: Array(mapped.indices),
-                                     infoEntryIndex: nil)
-        case .normalized:
+            return NormalizationPlan(names: templateNames(for: mapped), order: Array(mapped.indices))
+        // 脚本跑在 Core 层（要 JavaScriptCore），Domain 够不着它，所以这里给的是
+        // **脚本跑不成时的兜底**：调用方拿到脚本结果就用脚本的，拿不到就落到这里。
+        // 回落到规范化而不是抛错，是因为这条路径的下游是 Surge 的策略列表——
+        // 宁可名字不是用户想要的那套，也不能让它拿到一份空列表。
+        case .script, .normalized:
             let inputs = mapped.map { item -> NormalizationInput in
                 let source = primarySource(of: item.node)
                 return NormalizationInput(
@@ -126,8 +128,13 @@ public struct NodeNaming: Sendable, Equatable {
             let plan = NodeNormalization.plan(inputs, rules: regionRules, now: now)
             // 清洗同样要过：地区名和订阅名都是用户可改的，带上逗号或等号一样会拆坏 Surge 的行。
             let sanitized = plan.names.enumerated().map { NodeNaming.sanitize($1, index: $0 + 1) }
-            return NormalizationPlan(names: sanitized, order: plan.order,
-                                     infoEntryIndex: plan.infoEntryIndex)
+            // 行里的名字和 names 是同一批字符串，清洗过后要一起换掉，否则铺出来的行
+            // 仍是没洗过的那份——而界面显示的是洗过的，两边对不上。
+            let lines = plan.lines.enumerated().map { offset, line in
+                NormalizationPlan.Line(name: NodeNaming.sanitize(line.name, index: offset + 1),
+                                       index: line.index)
+            }
+            return NormalizationPlan(names: sanitized, lines: lines)
         }
     }
 
@@ -195,19 +202,17 @@ public struct NodeNaming: Sendable, Equatable {
 
         // 按**输出顺序**列，不按输入顺序：规范化会把信息节点挪到最后、把续约线路踢掉，
         // 而试跑要回答的就是「Surge 到底会收到什么」——照输入顺序列等于没回答。
-        var rows = plan.order.map { index in
-            PreviewRow(id: sample[index].node.entryID, originalName: sample[index].node.name,
-                       outputName: plan.names[index], localPort: sample[index].localPort)
-        }
-        if let first = plan.infoEntryIndex, let at = plan.order.firstIndex(of: first) {
-            rows.insert(PreviewRow(id: "info-entry", originalName: "",
-                                   outputName: NodeNormalization.infoEntryName,
-                                   localPort: sample[first].localPort), at: at)
+        // id 带上行号：同一个节点可以出现在多行里（合成的信息入口借的就是别人的端口），
+        // 拿 entryID 当 id 会让列表里出现重复键。
+        var rows = plan.lines.enumerated().map { offset, line in
+            PreviewRow(id: "\(offset)-\(sample[line.index].node.entryID)",
+                       originalName: sample[line.index].node.name,
+                       outputName: line.name, localPort: sample[line.index].localPort)
         }
         // 不输出的排在最末尾。名字里已经写着「排除：」，位置再靠后一点就不会被当成正常结果。
-        let excluded = Set(plan.order)
-        rows += sample.indices.filter { !excluded.contains($0) }.map { index in
-            PreviewRow(id: sample[index].node.entryID, originalName: sample[index].node.name,
+        let emitted = Set(plan.lines.map(\.index))
+        rows += sample.indices.filter { !emitted.contains($0) }.map { index in
+            PreviewRow(id: "x-\(sample[index].node.entryID)", originalName: sample[index].node.name,
                        outputName: plan.names[index], localPort: sample[index].localPort)
         }
         return (rows, isSample)
@@ -271,7 +276,9 @@ public struct NodeNaming: Sendable, Equatable {
 
     /// 逗号、等号、引号和换行在 Surge 配置里是语法字符，名字里带这些会把整行拆坏。
     /// 节点名来自机场、订阅名和模板来自用户，三者都不可信，所以清洗放在拼完之后。
-    private nonisolated static func sanitize(_ text: String, index: Int) -> String {
+    ///
+    /// 脚本返回的名字同样要过这一道——那是最不可信的一份输入。
+    nonisolated static func sanitize(_ text: String, index: Int) -> String {
         let safe = text.replacingOccurrences(of: "[,=\"'\\r\\n]", with: " ", options: .regularExpression)
             .replacingOccurrences(of: "  +", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespaces)

@@ -25,6 +25,9 @@ public protocol RouteBarAPIHost: AnyObject, Sendable {
     /// 对指定目标逐节点测一次可达性。结果只在这次响应里出现，不写进节点。
     func apiProbeTargets(url: String, ids: [String]?) async throws -> APIProbeResponse
     func apiSetRegionRules(_ rules: [RegionRule]) async
+    func apiNamingScript() async -> APINamingScript
+    func apiSaveNamingScript(_ script: String) async
+    func apiPreviewNamingScript(_ script: String) async -> APINamingScriptPreview
     func apiRegenerate() async
     func apiStartService() async
     func apiStopService() async
@@ -140,7 +143,22 @@ public struct APIRouter: Sendable {
             return encode(await host.apiSnapshot())
 
         case "naming":
+            // 取脚本是只读的，单独放在 POST 判定之前。
+            if rest == ["script"], method == "GET" {
+                return encode(await host.apiNamingScript())
+            }
             guard method == "POST" else { return .notFound }
+            if rest == ["script"] {
+                guard let input: APINamingScriptInput = decode(request.body) else { return .badRequest }
+                await host.apiSaveNamingScript(input.script)
+                return encode(await host.apiSnapshot())
+            }
+            // 试跑不保存，但仍走 POST：脚本要放在请求体里，而且写操作那套跨源防护
+            // 对它同样适用——它会执行任意 JS，比真正的写操作更不该被别的页面触发。
+            if rest == ["script", "preview"] {
+                guard let input: APINamingScriptInput = decode(request.body) else { return .badRequest }
+                return encode(await host.apiPreviewNamingScript(input.script))
+            }
             // 地区表整张替换，请求体和模板那条不是一个形状，所以先分出去。
             if rest == ["regions"] {
                 guard let input: APIRegionRulesInput = decode(request.body) else { return .badRequest }

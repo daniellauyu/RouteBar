@@ -202,6 +202,19 @@ enum WebUIPage {
               <div class="note" data-i18n="naming.hint"></div>
               <div id="naming-result" hidden style="margin-top:10px"></div>
               <!-- 地区表只在规范化模式下出现：模板模式根本不读它，摆在那里只会让人以为改了有用。 -->
+              <!-- 脚本编辑器：只在脚本模式下出现。 -->
+              <div id="naming-script" hidden style="margin-top:14px">
+                <div class="note" data-i18n="naming.scriptHint" style="margin-bottom:6px"></div>
+                <textarea id="naming-script-text" class="code" rows="18" spellcheck="false"
+                          autocapitalize="off" autocorrect="off"></textarea>
+                <div class="row wrap" style="margin-top:8px">
+                  <button class="ghost" id="btn-script-run" data-i18n="naming.scriptRun"></button>
+                  <button class="primary" id="btn-script-save" data-i18n="naming.scriptSave"></button>
+                  <button class="ghost" id="btn-script-template" data-i18n="naming.scriptTemplate"></button>
+                  <span class="count" id="script-status"></span>
+                </div>
+                <div id="script-result" hidden style="margin-top:10px"></div>
+              </div>
               <div id="naming-regions" hidden style="margin-top:14px">
                 <div class="note" data-i18n="naming.regionsHint" style="margin-bottom:6px"></div>
                 <textarea id="naming-region-table" rows="12" spellcheck="false"></textarea>

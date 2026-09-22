@@ -14,6 +14,24 @@ public struct StateStore: Sendable {
     public nonisolated var settingsURL: URL { rootURL.appendingPathComponent("settings.json") }
     public nonisolated var singBoxURL: URL { rootURL.appendingPathComponent("sing-box.json") }
     public nonisolated var surgeSnippetURL: URL { rootURL.appendingPathComponent("surge-proxies.conf") }
+    /// 命名脚本。
+    ///
+    /// 单独一个文件而不是塞进 settings.json：脚本动辄几百行，塞进去会让那份本来
+    /// 一眼能看完的配置变得没法读，而且 JSON 里的换行全成了 `\n`，出问题时想用
+    /// 别的编辑器打开看一眼都做不到。放成 .js 还能直接丢给编辑器和 lint。
+    public nonisolated var namingScriptURL: URL { rootURL.appendingPathComponent("naming-script.js") }
+
+    // MARK: - 命名脚本
+
+    /// 读脚本。没写过时返回空串——空脚本在上层等同于「没配」，会回落到规范化。
+    public nonisolated func loadNamingScript() throws -> String {
+        guard let data = try readIfPresent(namingScriptURL) else { return "" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    public nonisolated func saveNamingScript(_ script: String) throws {
+        try writePrivate(Data(script.utf8), to: namingScriptURL)
+    }
 
     // MARK: - 状态
 

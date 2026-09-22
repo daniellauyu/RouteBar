@@ -340,6 +340,67 @@ public actor SubscriptionCoordinator {
         outcome(await regenerateMessages(forceRestart: forceRestart))
     }
 
+    // MARK: - 命名脚本
+
+    public func namingScript() -> String {
+        (try? stateStore.loadNamingScript()) ?? ""
+    }
+
+    /// 存脚本并立刻重新生成一次——命名是即时生效的，存完不重算等于要用户
+    /// 再手动点一次「重新生成」才看得到结果。
+    public func saveNamingScript(_ script: String) async -> CoordinatorOutcome {
+        do {
+            try stateStore.saveNamingScript(script)
+        } catch {
+            return outcome([.init(.error, "脚本", "保存失败：\(error.localizedDescription)")])
+        }
+        return await regenerate()
+    }
+
+    /// 试跑：按传进来的脚本算一遍，**不保存、不安装**。
+    ///
+    /// 用当前这批真实节点跑，而不是造几个假的——脚本要处理的恰恰是机场那些花名和
+    /// 混在里面的订阅信息节点，假数据试不出问题。
+    public func previewNamingScript(_ script: String) -> NamingScriptPreview {
+        let active = subscriptions.filter(\.isEnabled).flatMap(\.nodes)
+        let mapped = ConfigurationGenerator.portMapping(nodes: active)
+        let proxies = ScriptedNaming.proxies(mapped: mapped, subscriptions: subscriptions, settings: settings)
+        do {
+            let result = try NodeScript.run(script: script, proxies: proxies)
+            let rows = result.plan.lines.map { line in
+                NamingScriptPreview.Row(name: proxies[line.index].name,
+                                        outputName: line.name,
+                                        localPort: proxies[line.index].localPort)
+            }
+            // 被过滤的按**输入顺序**列，不按输出顺序——它们压根没进输出，
+            // 而输入顺序就是端口顺序，对着节点页能一眼找到是哪几个。
+            let emitted = Set(result.plan.lines.map(\.index))
+            let filtered = proxies.indices.filter { !emitted.contains($0) }.map {
+                NamingScriptPreview.Row(name: proxies[$0].name, outputName: "",
+                                        localPort: proxies[$0].localPort)
+            }
+            return NamingScriptPreview(rows: rows, filtered: filtered,
+                                       logs: result.logs, warnings: result.warnings,
+                                       failure: nil, milliseconds: Int(result.duration * 1000),
+                                       nodeCount: proxies.count)
+        } catch {
+            let reason = (error as? NodeScriptError)?.errorDescription ?? error.localizedDescription
+            return NamingScriptPreview(rows: [], logs: [], warnings: [], failure: reason,
+                                       milliseconds: 0, nodeCount: proxies.count)
+        }
+    }
+
+    /// Surge 拉取的裸策略列表。
+    ///
+    /// 放在协调器而不是 `AppModel`：脚本模式要读磁盘上的脚本，而那是 `stateStore` 的事。
+    public func policyList() -> String {
+        let active = subscriptions.filter(\.isEnabled).flatMap(\.nodes)
+        let mapped = ConfigurationGenerator.portMapping(nodes: active)
+        let naming = NodeNaming(settings: settings, subscriptions: subscriptions)
+        return ConfigurationGenerator.surgePolicyLines(
+            mapped, naming: naming, plan: namingPlan(for: active, naming: naming).plan)
+    }
+
     /// 生成 → 校验 → 安装 → 重启，并把每一步的结果转成日志消息。
     private func regenerateMessages(forceRestart: Bool) async -> [OutcomeMessage] {
         // CommandRunner 是 async 的，等待子进程时 actor 会允许其他调用进入。安装链路本身仍必须
@@ -355,13 +416,21 @@ public actor SubscriptionCoordinator {
         }
 
         let active = subscriptions.filter(\.isEnabled).flatMap(\.nodes)
+        let naming = NodeNaming(settings: settings, subscriptions: subscriptions)
+        let scripted = namingPlan(for: active, naming: naming)
+        // 脚本失败只是名字不对，配置本身照样装——所以把这条消息拼在结果前面，
+        // 而不是直接 return 掉。用户在日志页看到它，同时代理继续可用。
+        let prefix: [OutcomeMessage] = scripted.failure.map {
+            [.init(.error, "脚本", "\($0)。本次按「规范化」输出")]
+        } ?? []
+
         do {
             let generated = try ConfigurationGenerator.generate(
-                nodes: active, naming: NodeNaming(settings: settings, subscriptions: subscriptions))
+                nodes: active, naming: naming, plan: scripted.plan)
             guard !generated.nodes.isEmpty else {
                 serviceState = await runtime.stop()
                 if let reason = serviceState.failureReason {
-                    return [.init(.error, "服务", "没有启用节点，但停止旧出口失败：\(reason)")]
+                    return prefix + [.init(.error, "服务", "没有启用节点，但停止旧出口失败：\(reason)")]
                 }
                 // 登录时 LaunchAgent 可能再次加载，磁盘配置也必须撤销旧出口。
                 if FileManager.default.fileExists(atPath: runtime.paths.singBoxConfig.path) {
@@ -369,7 +438,7 @@ public actor SubscriptionCoordinator {
                 }
                 try stateStore.saveGenerated(generated)
                 generatedAt = .now
-                return [.init(.notice, "配置", "没有启用节点，已停止 sing-box 并清空客户端出口")]
+                return prefix + [.init(.notice, "配置", "没有启用节点，已停止 sing-box 并清空客户端出口")]
             }
             // 只有 sing-box 那一份变了才值得重启：只改节点名时那份 JSON 一个字节都没动
             // （名字只出现在给客户端的策略列表里），顺手重启等于白断一次全部连接。
@@ -381,7 +450,7 @@ public actor SubscriptionCoordinator {
                 // 可能已经被外部停掉或崩了，直接 return 会让界面一直显示旧状态，
                 // 直到下次窗口激活才自我纠正。
                 serviceState = await runtime.status()
-                return [.init(.info, "配置", "配置未变化，已跳过安装与 sing-box 重启")]
+                return prefix + [.init(.info, "配置", "配置未变化，已跳过安装与 sing-box 重启")]
             }
             try await runtime.install(generated)
             try stateStore.saveGenerated(generated)
@@ -392,7 +461,7 @@ public actor SubscriptionCoordinator {
             guard forceRestart || !singBoxUnchanged else {
                 serviceState = await runtime.status()
                 messages.append(.init(.info, "服务", "sing-box 配置未变，无需重启"))
-                return messages
+                return prefix + messages
             }
             serviceState = await runtime.restart()
             switch serviceState {
@@ -403,11 +472,24 @@ public actor SubscriptionCoordinator {
             case .failed(let reason):
                 messages.append(.init(.error, "服务", "sing-box 重启失败：\(reason)"))
             }
-            return messages
+            return prefix + messages
         } catch {
             CoreLog.configuration.error("生成失败：\(error.localizedDescription, privacy: .public)")
-            return [.init(.error, "配置", "配置生成失败：\(error.localizedDescription)")]
+            return prefix + [.init(.error, "配置", "配置生成失败：\(error.localizedDescription)")]
         }
+    }
+
+    /// 按当前命名方式算出这一批节点的规划。
+    ///
+    /// 脚本模式要读磁盘上的脚本并跑 JS，所以不能放进 `NodeNaming`（那是纯计算的 Domain 层）。
+    /// 读不到脚本时交空串——`ScriptedNaming` 会当作「没配」回落到规范化，而不是报一个
+    /// 用户看不懂的文件错误。
+    private func namingPlan(for nodes: [ProxyNode], naming: NodeNaming) -> ScriptedNaming.Outcome {
+        ScriptedNaming.plan(mapped: ConfigurationGenerator.portMapping(nodes: nodes),
+                            subscriptions: subscriptions,
+                            settings: settings,
+                            script: (try? stateStore.loadNamingScript()) ?? "",
+                            naming: naming)
     }
 
     private func acquireRegenerationSlot() async {

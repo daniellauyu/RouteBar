@@ -53,9 +53,12 @@ public enum ConfigurationGenerator {
             .map { PortMappedNode(node: $0.element, localPort: startingPort + $0.offset) }
     }
 
+    /// `plan` 传 nil 时按 `naming` 现算。传值是给脚本命名用的：脚本要跑
+    /// JavaScriptCore，只能在 Core 层算好再交进来。
     public nonisolated static func generate(nodes: [ProxyNode],
                                             startingPort: Int = 7701,
-                                            naming: NodeNaming = .default) throws -> GeneratedConfiguration {
+                                            naming: NodeNaming = .default,
+                                            plan: NormalizationPlan? = nil) throws -> GeneratedConfiguration {
         let mapped = portMapping(nodes: nodes, startingPort: startingPort)
 
         let inbounds: [[String: Any]] = mapped.enumerated().map { index, item in
@@ -87,7 +90,7 @@ public enum ConfigurationGenerator {
             "route": ["rules": rules],
         ]
         let json = try JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys])
-        let plan = naming.plan(for: mapped)
+        let plan = plan ?? naming.plan(for: mapped)
         let lines = policyLines(plan: plan, mapped: mapped)
         return GeneratedConfiguration(nodes: mapped, singBoxJSON: json,
                                       surgeProxySection: "[Proxy]\n" + lines.text,
@@ -103,32 +106,26 @@ public enum ConfigurationGenerator {
     /// `naming` 也必须两边同源：本地订阅服务是按请求现算的，传了不一样的命名规则，
     /// 同一个端口在两种输出方式下会有两个名字。
     public nonisolated static func surgePolicyLines(_ mapped: [PortMappedNode],
-                                                    naming: NodeNaming = .default) -> String {
-        policyLines(plan: naming.plan(for: mapped), mapped: mapped).text
+                                                    naming: NodeNaming = .default,
+                                                    plan: NormalizationPlan? = nil) -> String {
+        policyLines(plan: plan ?? naming.plan(for: mapped), mapped: mapped).text
     }
 
-    /// 把规划铺成一行行 `名称 = socks5, 127.0.0.1, 端口`。
+    /// 把规划铺成一行行 `名称 = socks5, 127.0.0.1, 端口, udp-relay=true`。
     ///
-    /// 顺序、排除和那条合成的信息入口都在这里落地，而不是在命名那一层：名字必须与端口
-    /// **逐位对齐**（错一位就整份串台），所以 `NodeNaming` 只能返回对齐的数组；
-    /// 「怎么排、谁不输出」是这一层的事，因为只有这里每一行都自带端口，重排才是安全的。
+    /// `udp-relay=true` 不是可选的。Surge 对 SOCKS5 代理**默认不转发 UDP**，不写这一项，
+    /// QUIC、游戏、部分视频流的 UDP 流量根本不会进到 sing-box 里——而这种失败是沉默的：
+    /// TCP 一切正常，只有依赖 UDP 的那部分变慢或退回明文，看日志也看不出来。
+    /// sing-box 这边一直是就绪的：入站是 `mixed`（SOCKS5 支持 UDP ASSOCIATE），
+    /// 路由规则上的 `udp_disable_domain_unmapping` 本来就只有 UDP 真流过来才有意义。
+    ///
+    /// 每一行的名字与端口的绑定由 `plan.lines` 给定，这一层只负责铺成文本——
+    /// 同一个端口出现在多行里是合法的（合成的信息入口借的就是别人的连接参数）。
     private nonisolated static func policyLines(plan: NormalizationPlan,
                                                 mapped: [PortMappedNode]) -> (text: String, names: [String]) {
-        var names = plan.order.map { plan.names[$0] }
-        var ports = plan.order.map { mapped[$0].localPort }
-
-        // 信息入口：Surge 不接受只有名字、没有连接参数的策略项，所以借第一条信息节点的端口。
-        //
-        // 为什么要多这一条：`💡 订阅信息` 组按 `^【INFO】` 收节点，而 Surge 的 select 组
-        // 默认选中第一项——没有这条入口时，默认选中的会是「更新时间：…」这种连不通的假节点，
-        // 一旦有人手滑把这个组设成某条规则的出口，流量就直接断在那里。
-        if let first = plan.infoEntryIndex, let at = plan.order.firstIndex(of: first) {
-            names.insert(NodeNormalization.infoEntryName, at: at)
-            ports.insert(mapped[first].localPort, at: at)
-        }
-
-        let text = zip(names, ports)
-            .map { "\($0) = socks5, 127.0.0.1, \($1)" }
+        let names = plan.lines.map(\.name)
+        let text = plan.lines
+            .map { "\($0.name) = socks5, 127.0.0.1, \(mapped[$0.index].localPort), udp-relay=true" }
             .joined(separator: "\n") + "\n"
         return (text, names)
     }

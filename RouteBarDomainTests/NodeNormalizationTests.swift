@@ -105,8 +105,9 @@ import Testing
         ], rules: rules)
 
         #expect(plan.names == ["【JSSR】香港01", "【JSSR】香港02", "【JSSR】美国01", "【STOTIK】香港01"])
-        #expect(plan.order == [0, 1, 2, 3])
-        #expect(plan.infoEntryIndex == nil)
+        #expect(plan.lines.map(\.index) == [0, 1, 2, 3])
+        // 没有信息节点就不该凭空多出一条入口。
+        #expect(plan.lines.count == 4)
     }
 
     @Test("信息节点排到最后，按订阅顺序再按类型") func infoEntriesSortToTheEnd() {
@@ -115,15 +116,21 @@ import Testing
             input("[vip1] ⑮香港︱Vless", "JSSR", rank: 1),
             input("剩余流量：89.98 GB", "JSSR", rank: 1),
             input("更新時間：2026-01-01 00:00", "STOTIK", rank: 0),
-        ], rules: rules, now: Date(timeIntervalSince1970: 1_790_000_000))
+        ], rules: rules, now: Date(timeIntervalSince1970: 1_790_000_000),
+           timeZone: TimeZone(identifier: "Asia/Shanghai")!)
 
-        // 普通节点在前；信息节点按 STOTIK(0) → JSSR(1)，同订阅内按更新→流量→重置→到期。
-        #expect(plan.order == [1, 3, 0, 2])
-        #expect(plan.names[1] == "【JSSR】香港01")
-        #expect(plan.names[0] == "【INFO】STOTIK｜到期时间：2027-03-30")
-        #expect(plan.names[2] == "【INFO】JSSR｜剩余流量：89.98 GB")
-        // 入口借的是排序后第一条信息节点。
-        #expect(plan.infoEntryIndex == 3)
+        // 普通节点在前；入口；然后信息节点按 STOTIK(0) → JSSR(1)，
+        // 同订阅内按更新→流量→重置→到期。
+        #expect(plan.lines.map(\.index) == [1, 3, 3, 0, 2])
+        #expect(plan.lines.map(\.name) == [
+            "【JSSR】香港01",
+            NodeNormalization.infoEntryName,
+            "【INFO】STOTIK｜更新时间：2026-09-21 22:13",
+            "【INFO】STOTIK｜到期时间：2027-03-30",
+            "【INFO】JSSR｜剩余流量：89.98 GB",
+        ])
+        // 入口与第一条信息节点共用一个下标——它借的就是后者的连接参数。
+        #expect(plan.lines[1].index == plan.lines[2].index)
     }
 
     @Test("更新时间显示订阅自己的更新时刻") func updateTimeUsesSubscriptionTimestamp() {
@@ -143,7 +150,7 @@ import Testing
             input("續約專用線路 - user.stotik.nl", "STOTIK", rank: 1),
         ], rules: rules)
 
-        #expect(plan.order == [0])
+        #expect(plan.lines.map(\.index) == [0])
         #expect(plan.names[1] == "【STOTIK】排除：續約專用線路 - user.stotik.nl")
     }
 
@@ -153,7 +160,7 @@ import Testing
             input("剩餘流量：89.98 GB", "JSSR"),
         ], rules: rules)
 
-        #expect(plan.order.count == 1)
+        #expect(plan.lines.count == 2)  // 一条信息节点 + 它前面的入口
     }
 
     @Test("地区表为空时回落到内置表") func emptyRulesFallBackToDefaults() {

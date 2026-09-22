@@ -25,6 +25,20 @@ import Testing
         for line in lines { #expect(generated.surgeProxySection.contains(line)) }
     }
 
+    /// 每一行都必须带 `udp-relay=true`。
+    ///
+    /// Surge 对 SOCKS5 代理默认不转发 UDP。漏掉这一项时 TCP 一切正常，只有 QUIC、游戏、
+    /// 部分视频流悄悄退化——没有任何报错，日志里也看不出来，所以只能在这里钉死。
+    @Test func everyPolicyLineEnablesUDPRelay() throws {
+        let generated = try ConfigurationGenerator.generate(nodes: [node("a"), node("b")])
+
+        let lines = generated.surgePolicyList.split(separator: "\n").map(String.init)
+        #expect(lines.count == 2)
+        #expect(lines.allSatisfy { $0.hasSuffix(", udp-relay=true") })
+        #expect(generated.surgeProxySection
+            .contains("节点a = socks5, 127.0.0.1, 7701, udp-relay=true"))
+    }
+
     /// 订阅地址返回的列表和写进配置文件的 `[Proxy]` 段必须逐字节同源。
     ///
     /// 两边各拼一遍的话，网页上看到的名字和落盘那份对不上，
