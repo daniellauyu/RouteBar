@@ -81,13 +81,17 @@ struct NodeNamePreviewView: View {
     private var result: (rows: [NodeNaming.PreviewRow], isSample: Bool) {
         NodeNaming.previewRows(template: template,
                                subscriptions: model.subscriptions,
-                               mapped: model.mappedNodes)
+                               mapped: model.mappedNodes,
+                               style: model.settings.nodeNamingStyle,
+                               regionRules: model.settings.regionRules)
     }
 
     private var caption: String {
         result.isSample
             ? "当前没有启用节点，下面是造出来的示例——真实节点名会替换掉「香港 01」这些。"
-            : "共 \(result.rows.count) 个启用节点。禁用的节点不输出到 Surge，因此不在这里。"
+            : model.settings.nodeNamingStyle == .normalized
+                ? "共 \(result.rows.count) 行，按**输出顺序**排：普通节点在前，订阅信息在后，「排除：」开头的那些不会进 Surge。"
+                : "共 \(result.rows.count) 个启用节点。禁用的节点不输出到 Surge，因此不在这里。"
     }
 
     private var placeholderHelp: String {

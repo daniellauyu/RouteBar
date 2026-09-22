@@ -22,6 +22,7 @@ enum WebUIScript {
     let editingId = null;
     const subscriptionDrafts = new Map();
     let namingDirty = false;
+    let regionsDirty = false;
     /* 目标可达的上一次结果。只活在这一页，刷新快照不会动它。 */
     let probeResponse = null;
     let probing = false;
@@ -593,12 +594,47 @@ enum WebUIScript {
       if (!namingDirty && document.activeElement !== input) input.value = naming.template;
       input.placeholder = naming.defaultTemplate;
       $('naming-preview').textContent = naming.preview.join(' · ');
-      $('naming-help').textContent = t('naming.help') +
-        naming.placeholders.map((p) => p.token + ' ' + p.summary).join('、');
+
+      /* 每次都重建选项而不是只建一次：切语言不重载页面，只建一次的话
+         选项文字会一直停在进来时那门语言上。 */
+      const style = $('naming-style');
+      style.replaceChildren(option('template', t('naming.style.template')),
+                            option('normalized', t('naming.style.normalized')));
+      style.value = naming.style;
+      const normalized = naming.style === 'normalized';
+      /* 规范化模式下模板不参与生成。留着能看但禁掉，免得有人改半天发现输出没变。 */
+      input.disabled = normalized;
+      $('btn-naming-reset').disabled = normalized;
+      $('naming-help').textContent = normalized
+        ? t('naming.normalizedHelp')
+        : t('naming.help') + naming.placeholders.map((p) => p.token + ' ' + p.summary).join('、');
+
+      $('naming-regions').hidden = !normalized;
+      const table = $('naming-region-table');
+      if (normalized && !regionsDirty && document.activeElement !== table) {
+        table.value = formatRegionRules(naming.regionRules);
+      }
+    }
+
+    /* 一行一条规则：`香港 = 香港, HONG KONG, HK`。
+       用文本而不是一行行的 DOM 控件，是因为顺序就是优先级——挪一条规则的位置在文本里
+       是剪切一行，换成按钮就得再做一套上移下移，而这张表本来就是整体改完一次提交的。 */
+    function formatRegionRules(rules) {
+      return (rules || []).map((rule) => rule.region + ' = ' + rule.keywords.join(', ')).join('\n');
+    }
+
+    function parseRegionRules(text) {
+      return text.split('\n').map((line) => {
+        const at = line.indexOf('=');
+        if (at < 0) return null;
+        const region = line.slice(0, at).trim();
+        const keywords = line.slice(at + 1).split(',').map((word) => word.trim()).filter(Boolean);
+        return region && keywords.length ? { region, keywords } : null;
+      }).filter(Boolean);
     }
 
     async function saveNaming(template) {
-      const data = await call('/naming', 'POST', { template });
+      const data = await call('/naming', 'POST', { template, style: $('naming-style').value });
       if (data) {
         namingDirty = false;
         $('naming-template').value = data.naming.template;
@@ -608,10 +644,26 @@ enum WebUIScript {
       }
     }
 
+    async function saveRegions(rules) {
+      const data = await call('/naming/regions', 'POST', { rules });
+      if (data) {
+        regionsDirty = false;
+        $('naming-region-table').value = formatRegionRules(data.naming.regionRules);
+        $('naming-result').hidden = true;
+        render(data);
+        toast(t('naming.regionsSaved', data.naming.regionRules.length));
+      }
+    }
+
     /* 试跑：服务端按传过去的模板算一遍名字，不保存任何东西。
        名字里的序号和重名补号都取决于整批节点，所以只能由服务端算，网页不自己拼。 */
     async function testNaming(template) {
-      const data = await call('/naming/preview', 'POST', { template });
+      /* 带上输入框里**还没保存**的方式和地区表：试跑要回答的是「按我现在写的这套规则
+         会变成什么」，用已保存的那份算等于保存前根本没法验证。 */
+      const style = $('naming-style').value;
+      const body = { template, style };
+      if (style === 'normalized') body.regionRules = parseRegionRules($('naming-region-table').value);
+      const data = await call('/naming/preview', 'POST', body);
       if (!data) return;
       const box = $('naming-result');
       const head = element('div', 'dim', data.isSample
@@ -827,6 +879,16 @@ enum WebUIScript {
     };
     /* 模板一改，上一次的试跑结果就不再对应输入框里的内容了，留着只会看错。 */
     $('naming-template').oninput = () => { namingDirty = true; $('naming-result').hidden = true; };
+    /* 切换方式立即保存：它不像模板那样要先看一眼结果，而两种方式各自的输入
+       （模板 / 地区表）也只有切过去之后才编辑得了。 */
+    $('naming-style').onchange = () => saveNaming($('naming-template').value.trim());
+    $('naming-region-table').oninput = () => { regionsDirty = true; $('naming-result').hidden = true; };
+    $('btn-regions-save').onclick = () => saveRegions(parseRegionRules($('naming-region-table').value));
+    $('btn-regions-reset').onclick = () => {
+      if (!snapshot) return;
+      $('naming-region-table').value = formatRegionRules(snapshot.naming.defaultRegionRules);
+      regionsDirty = true;
+    };
 
     $('add-form').onsubmit = async (event) => {
       event.preventDefault();

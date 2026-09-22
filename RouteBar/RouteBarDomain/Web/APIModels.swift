@@ -243,16 +243,28 @@ public struct APINaming: nonisolated Codable, Sendable {
     public var template: String
     public var defaultTemplate: String
     public var placeholders: [APINamingPlaceholder]
-    /// 前两个节点按当前模板会叫什么。没有节点时是造出来的示例。
+    /// 前两个节点按当前规则会叫什么。没有节点时是造出来的示例。
     public var preview: [String]
+    /// 当前用的是模板还是规范化。
+    public var style: String
+    /// 规范化的地区表，顺序即优先级。
+    public var regionRules: [RegionRule]
+    /// 内置地区表，供「恢复默认」用。网页不自带一份副本——两边各存一份，
+    /// 改了内置表就会出现「恢复默认」恢复出一张过时的表。
+    public var defaultRegionRules: [RegionRule]
 
     public nonisolated init(state: AppViewState) {
         template = state.settings.nodeNameTemplate
         defaultTemplate = NodeNaming.defaultTemplate
         placeholders = NodeNaming.placeholders.map { APINamingPlaceholder(token: $0.token, summary: $0.summary) }
+        style = state.settings.nodeNamingStyle.rawValue
+        regionRules = state.settings.regionRules
+        defaultRegionRules = NodeNormalization.defaultRegionRules
         preview = NodeNaming.preview(template: state.settings.nodeNameTemplate,
                                      subscriptions: state.subscriptions,
-                                     mapped: state.mappedNodes)
+                                     mapped: state.mappedNodes,
+                                     style: state.settings.nodeNamingStyle,
+                                     regionRules: state.settings.regionRules)
     }
 }
 
@@ -263,11 +275,18 @@ public struct APINamingPreview: nonisolated Codable, Sendable {
     /// 一个启用节点都没有，下面这些是造出来的示例。
     public var isSample: Bool
 
-    public nonisolated init(state: AppViewState, template: String) {
+    /// 试跑用的是**请求里带来的**方式和地区表，不是已保存的那一份——否则改完地区表
+    /// 点「测试」看到的还是旧规则的结果，等于没法在保存前验证。
+    public nonisolated init(state: AppViewState, template: String,
+                            style: NodeNamingStyle? = nil, regionRules: [RegionRule]? = nil) {
         self.template = NodeNaming.normalized(template)
+        let rules = regionRules.map { NodeNormalization.normalized($0) }
         let result = NodeNaming.previewRows(template: template,
                                             subscriptions: state.subscriptions,
-                                            mapped: state.mappedNodes)
+                                            mapped: state.mappedNodes,
+                                            style: style ?? state.settings.nodeNamingStyle,
+                                            regionRules: (rules?.isEmpty == false ? rules! : nil)
+                                                ?? state.settings.regionRules)
         rows = result.rows.map {
             APINamingPreviewRow(name: $0.originalName, outputName: $0.outputName, localPort: $0.localPort)
         }
@@ -322,12 +341,35 @@ public struct APISubscriptionInput: nonisolated Codable, Sendable {
     }
 }
 
-/// `POST /api/naming` 的请求体：全局节点名模板。
+/// `POST /api/naming` 的请求体：全局节点名模板，以及可选的命名方式。
+///
+/// `style` 可空是为了向后兼容：老网页只会发 `template`，那时不该顺手把方式改掉。
 public struct APINamingInput: nonisolated Codable, Sendable {
     public var template: String
+    public var style: String?
+    /// 只在 `/api/naming/preview` 上用：带着未保存的地区表试跑。
+    public var regionRules: [RegionRule]?
 
-    public nonisolated init(template: String) {
+    public nonisolated init(template: String, style: String? = nil, regionRules: [RegionRule]? = nil) {
         self.template = template
+        self.style = style
+        self.regionRules = regionRules
+    }
+
+    public nonisolated var namingStyle: NodeNamingStyle? {
+        style.flatMap { NodeNamingStyle(rawValue: $0) }
+    }
+}
+
+/// `POST /api/naming/regions` 的请求体：整张地区表一次性替换。
+///
+/// 整表替换而不是逐条增删：顺序就是优先级，逐条改就要再定义一套「插到哪里」的语义，
+/// 而网页那边本来就是把整张表编辑完再提交的。
+public struct APIRegionRulesInput: nonisolated Codable, Sendable {
+    public var rules: [RegionRule]
+
+    public nonisolated init(rules: [RegionRule]) {
+        self.rules = rules
     }
 }
 

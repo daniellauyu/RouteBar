@@ -154,12 +154,15 @@ enum WebUIStyle {
     button.small { min-height:28px; padding:5px 10px; font-size:12.5px; }
     button:disabled { opacity:.42; cursor:default; }
 
-    input, select {
+    input, select, textarea {
       min-height:34px; padding:7px 10px; border-radius:9px; font-size:13.5px;
       border:1px solid var(--line); background:var(--surface); color:var(--ink); width:100%;
     }
-    input:focus, select:focus { outline:0; border-color:var(--tint); background:var(--card); }
+    input:focus, select:focus, textarea:focus { outline:0; border-color:var(--tint); background:var(--card); }
     select { cursor:pointer; }
+    /* 地区表一行一条规则，顺序即优先级——等宽字体才看得清哪些行对齐、哪行写歪了。
+       只允许竖向拉伸：横向拉会把卡片撑破。 */
+    textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; line-height:1.65; resize:vertical; }
 
     /* ---------- 通用排版 ---------- */
     .row { display:flex; align-items:center; gap:11px; }

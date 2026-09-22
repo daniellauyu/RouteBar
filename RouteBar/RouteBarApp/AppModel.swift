@@ -1094,15 +1094,27 @@ extension AppModel: RouteBarAPIHost {
                                         nodeNameTemplate: input.nodeNameTemplate)
     }
 
-    /// 全局模板走设置：它和端口、输出方式一样是应用级配置，存在 settings.json 里。
-    func apiSetNodeNameTemplate(_ template: String) async {
+    /// 全局模板与命名方式走设置：它们和端口、输出方式一样是应用级配置，存在 settings.json 里。
+    func apiSetNaming(_ input: APINamingInput) async {
         var updated = settings
-        updated.nodeNameTemplate = NodeNaming.normalized(template)
+        updated.nodeNameTemplate = NodeNaming.normalized(input.template)
+        // 请求里没带方式时保持原样——老网页只发 template，不该顺手把方式改掉。
+        if let style = input.namingStyle { updated.nodeNamingStyle = style }
         await saveSettingsAsync(updated)
     }
 
-    func apiPreviewNodeNames(_ template: String) async -> APINamingPreview {
-        APINamingPreview(state: currentViewState, template: template)
+    /// 地区表整张替换。清洗过再存：空地区名或空关键词会让那条规则匹配所有名字，
+    /// 把它后面的规则全部挡死，而表面上只是「怎么所有节点都算香港」。
+    func apiSetRegionRules(_ rules: [RegionRule]) async {
+        var updated = settings
+        let cleaned = NodeNormalization.normalized(rules)
+        updated.regionRules = cleaned.isEmpty ? NodeNormalization.defaultRegionRules : cleaned
+        await saveSettingsAsync(updated)
+    }
+
+    func apiPreviewNodeNames(_ input: APINamingInput) async -> APINamingPreview {
+        APINamingPreview(state: currentViewState, template: input.template,
+                         style: input.namingStyle, regionRules: input.regionRules)
     }
 
     func apiDeleteSubscription(_ id: UUID) async { await deleteSubscription(id) }

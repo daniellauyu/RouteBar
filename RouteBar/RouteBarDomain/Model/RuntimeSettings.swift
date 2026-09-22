@@ -21,7 +21,15 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
     public var subscriptionToken: String
     /// 生成的节点名模板，占位符见 `NodeNaming`。两种 Surge 接法用的都是它。
     /// 每条订阅可以用 `SubscriptionRecord.nodeNameTemplate` 覆盖它。
+    /// 只在 `nodeNamingStyle == .template` 时生效。
     public var nodeNameTemplate: String
+    /// 节点名怎么生成：套模板，还是压成 `【来源】地区NN` 的规范化形式。
+    ///
+    /// 默认是模板——这个键是后加的，老 settings.json 里没有，回落成规范化
+    /// 会把所有人 Surge 策略组里存着的名字一次性换掉。
+    public var nodeNamingStyle: NodeNamingStyle
+    /// 规范化用的地区识别表，顺序即优先级。只在 `nodeNamingStyle == .normalized` 时生效。
+    public var regionRules: [RegionRule]
 
     public nonisolated init(singBoxBinaryPath: String,
                             singBoxConfigPath: String,
@@ -31,7 +39,9 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
                             launchAgentLabel: String,
                             subscriptionPort: Int = 7899,
                             subscriptionToken: String = RouteBarSettings.makeToken(),
-                            nodeNameTemplate: String = NodeNaming.defaultTemplate) {
+                            nodeNameTemplate: String = NodeNaming.defaultTemplate,
+                            nodeNamingStyle: NodeNamingStyle = .template,
+                            regionRules: [RegionRule] = NodeNormalization.defaultRegionRules) {
         self.singBoxBinaryPath = singBoxBinaryPath
         self.singBoxConfigPath = singBoxConfigPath
         self.singBoxLogPath = singBoxLogPath
@@ -41,6 +51,8 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
         self.subscriptionPort = subscriptionPort
         self.subscriptionToken = subscriptionToken
         self.nodeNameTemplate = nodeNameTemplate
+        self.nodeNamingStyle = nodeNamingStyle
+        self.regionRules = regionRules
     }
 
     public nonisolated static func makeToken() -> String {
@@ -82,6 +94,7 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
         case singBoxBinaryPath, singBoxConfigPath, singBoxLogPath, singBoxErrorLogPath
         case launchAgentPath, launchAgentLabel
         case subscriptionPort, subscriptionToken, nodeNameTemplate
+        case nodeNamingStyle, regionRules
     }
 
     public nonisolated init(from decoder: Decoder) throws {
@@ -100,6 +113,14 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
         // 补成空的等于把所有人的节点名换掉，Surge 策略组里存的旧名字会集体失效。
         nodeNameTemplate = try container.decodeIfPresent(String.self, forKey: .nodeNameTemplate)
             ?? NodeNaming.defaultTemplate
+        // 同理：缺这个键的是升级上来的老配置，必须当作模板模式，否则一次升级
+        // 就把名字从 `RouteBar 01 - 香港` 换成 `【机场】香港01`，策略组集体失效。
+        nodeNamingStyle = try container.decodeIfPresent(NodeNamingStyle.self, forKey: .nodeNamingStyle)
+            ?? .template
+        // 地区表存的是用户改过的那一份，为空（键缺失或被清空）时用内置表——
+        // 空表会让每个节点都认不出地区、全部堆进「小众」。
+        let decodedRules = try container.decodeIfPresent([RegionRule].self, forKey: .regionRules) ?? []
+        regionRules = decodedRules.isEmpty ? NodeNormalization.defaultRegionRules : decodedRules
     }
 
     /// Homebrew 在 Apple Silicon 与 Intel 上的前缀不同，装法也可能是别的包管理器。

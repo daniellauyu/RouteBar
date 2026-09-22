@@ -192,6 +192,7 @@ enum WebUIPage {
             </div>
             <div class="card-body">
               <div class="row wrap">
+                <select id="naming-style" style="width:auto;flex:0 0 auto;min-width:118px"></select>
                 <input id="naming-template" class="grow">
                 <button class="ghost" id="btn-naming-test" data-i18n="naming.test"></button>
                 <button class="primary" id="btn-naming-save" data-i18n="naming.save"></button>
@@ -200,6 +201,15 @@ enum WebUIPage {
               <div class="note" id="naming-help"></div>
               <div class="note" data-i18n="naming.hint"></div>
               <div id="naming-result" hidden style="margin-top:10px"></div>
+              <!-- 地区表只在规范化模式下出现：模板模式根本不读它，摆在那里只会让人以为改了有用。 -->
+              <div id="naming-regions" hidden style="margin-top:14px">
+                <div class="note" data-i18n="naming.regionsHint" style="margin-bottom:6px"></div>
+                <textarea id="naming-region-table" rows="12" spellcheck="false"></textarea>
+                <div class="row wrap" style="margin-top:8px">
+                  <button class="primary" id="btn-regions-save" data-i18n="naming.regionsSave"></button>
+                  <button class="ghost" id="btn-regions-reset" data-i18n="naming.regionsReset"></button>
+                </div>
+              </div>
             </div>
           </div>
         </section>

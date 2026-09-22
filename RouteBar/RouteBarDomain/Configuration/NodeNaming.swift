@@ -41,11 +41,21 @@ public struct NodeNaming: Sendable, Equatable {
     private let namesBySource: [UUID: String]
     /// 订阅在列表里的位置，用来在一个节点有多个来源时挑出唯一确定的那一个。
     private let rankBySource: [UUID: Int]
+    /// 订阅最近一次更新成功的时刻，规范化模式下「更新时间」那条信息节点显示它。
+    private let updatedAtBySource: [UUID: Date]
+    /// 套模板还是走规范化。
+    public let style: NodeNamingStyle
+    /// 规范化用的地区表。模板模式下不读。
+    public let regionRules: [RegionRule]
 
     public nonisolated static let `default` = NodeNaming()
 
     public nonisolated init(template: String = NodeNaming.defaultTemplate,
-                            subscriptions: [SubscriptionRecord] = []) {
+                            subscriptions: [SubscriptionRecord] = [],
+                            style: NodeNamingStyle = .template,
+                            regionRules: [RegionRule] = NodeNormalization.defaultRegionRules) {
+        self.style = style
+        self.regionRules = regionRules
         // 模板留空时回落到默认值：空模板会把每个节点都拼成空名字，写进 Surge 就是一批
         // `= socks5, …` 的残行，整段配置作废。
         let trimmed = template.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -54,9 +64,11 @@ public struct NodeNaming: Sendable, Equatable {
         var templates: [UUID: String] = [:]
         var names: [UUID: String] = [:]
         var ranks: [UUID: Int] = [:]
+        var updatedAt: [UUID: Date] = [:]
         for (offset, subscription) in subscriptions.enumerated() {
             names[subscription.id] = subscription.name
             ranks[subscription.id] = offset
+            updatedAt[subscription.id] = subscription.updatedAt
             let override = (subscription.nodeNameTemplate ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if !override.isEmpty { templates[subscription.id] = override }
@@ -64,10 +76,12 @@ public struct NodeNaming: Sendable, Equatable {
         templatesBySource = templates
         namesBySource = names
         rankBySource = ranks
+        updatedAtBySource = updatedAt
     }
 
     public nonisolated init(settings: RouteBarSettings, subscriptions: [SubscriptionRecord]) {
-        self.init(template: settings.nodeNameTemplate, subscriptions: subscriptions)
+        self.init(template: settings.nodeNameTemplate, subscriptions: subscriptions,
+                  style: settings.nodeNamingStyle, regionRules: settings.regionRules)
     }
 
     /// 存进设置前先过这一道：清掉首尾空白，空模板存成默认值。
@@ -87,6 +101,37 @@ public struct NodeNaming: Sendable, Equatable {
     /// 前面的会静默消失（节点数对不上，但没有任何报错）。而模板一旦不含 `{index}`
     /// 或 `{port}`，同名节点就必然撞车——所以去重只能在知道全部名字的地方做。
     public nonisolated func names(for mapped: [PortMappedNode]) -> [String] {
+        plan(for: mapped).names
+    }
+
+    /// 整批规划：叫什么、按什么顺序输出、哪些不输出、要不要补一条信息入口。
+    ///
+    /// 模板模式下顺序就是输入顺序、一个都不排除——那条路径上「规划」退化成「起名字」，
+    /// 但两种模式共用一个返回类型，`ConfigurationGenerator` 才不用分支处理。
+    public nonisolated func plan(for mapped: [PortMappedNode], now: Date = .now) -> NormalizationPlan {
+        switch style {
+        case .template:
+            return NormalizationPlan(names: templateNames(for: mapped),
+                                     order: Array(mapped.indices),
+                                     infoEntryIndex: nil)
+        case .normalized:
+            let inputs = mapped.map { item -> NormalizationInput in
+                let source = primarySource(of: item.node)
+                return NormalizationInput(
+                    name: item.node.name,
+                    sourceName: source.flatMap { namesBySource[$0] } ?? "",
+                    sourceRank: source.flatMap { rankBySource[$0] } ?? .max,
+                    sourceUpdatedAt: source.flatMap { updatedAtBySource[$0] })
+            }
+            let plan = NodeNormalization.plan(inputs, rules: regionRules, now: now)
+            // 清洗同样要过：地区名和订阅名都是用户可改的，带上逗号或等号一样会拆坏 Surge 的行。
+            let sanitized = plan.names.enumerated().map { NodeNaming.sanitize($1, index: $0 + 1) }
+            return NormalizationPlan(names: sanitized, order: plan.order,
+                                     infoEntryIndex: plan.infoEntryIndex)
+        }
+    }
+
+    private nonisolated func templateNames(for mapped: [PortMappedNode]) -> [String] {
         var used: Set<String> = []
         return mapped.enumerated().map { offset, item in
             let base = render(index: offset + 1, node: item.node, port: item.localPort)
@@ -138,13 +183,32 @@ public struct NodeNaming: Sendable, Equatable {
     /// 改模板等于盲改，而一片空白也分不清是「模板有问题」还是「本来就没节点」。
     public nonisolated static func previewRows(template: String,
                                                subscriptions: [SubscriptionRecord],
-                                               mapped: [PortMappedNode]) -> (rows: [PreviewRow], isSample: Bool) {
-        let naming = NodeNaming(template: template, subscriptions: subscriptions)
+                                               mapped: [PortMappedNode],
+                                               style: NodeNamingStyle = .template,
+                                               regionRules: [RegionRule] = NodeNormalization.defaultRegionRules)
+        -> (rows: [PreviewRow], isSample: Bool) {
+        let naming = NodeNaming(template: template, subscriptions: subscriptions,
+                                style: style, regionRules: regionRules)
         let isSample = mapped.isEmpty
-        let sample = isSample ? sampleNodes(subscriptions: subscriptions) : mapped
-        let rows = zip(sample, naming.names(for: sample)).map { item, name in
-            PreviewRow(id: item.node.entryID, originalName: item.node.name,
-                       outputName: name, localPort: item.localPort)
+        let sample = isSample ? sampleNodes(subscriptions: subscriptions, style: style) : mapped
+        let plan = naming.plan(for: sample)
+
+        // 按**输出顺序**列，不按输入顺序：规范化会把信息节点挪到最后、把续约线路踢掉，
+        // 而试跑要回答的就是「Surge 到底会收到什么」——照输入顺序列等于没回答。
+        var rows = plan.order.map { index in
+            PreviewRow(id: sample[index].node.entryID, originalName: sample[index].node.name,
+                       outputName: plan.names[index], localPort: sample[index].localPort)
+        }
+        if let first = plan.infoEntryIndex, let at = plan.order.firstIndex(of: first) {
+            rows.insert(PreviewRow(id: "info-entry", originalName: "",
+                                   outputName: NodeNormalization.infoEntryName,
+                                   localPort: sample[first].localPort), at: at)
+        }
+        // 不输出的排在最末尾。名字里已经写着「排除：」，位置再靠后一点就不会被当成正常结果。
+        let excluded = Set(plan.order)
+        rows += sample.indices.filter { !excluded.contains($0) }.map { index in
+            PreviewRow(id: sample[index].node.entryID, originalName: sample[index].node.name,
+                       outputName: plan.names[index], localPort: sample[index].localPort)
         }
         return (rows, isSample)
     }
@@ -153,14 +217,25 @@ public struct NodeNaming: Sendable, Equatable {
     public nonisolated static func preview(template: String,
                                            subscriptions: [SubscriptionRecord],
                                            mapped: [PortMappedNode],
+                                           style: NodeNamingStyle = .template,
+                                           regionRules: [RegionRule] = NodeNormalization.defaultRegionRules,
                                            limit: Int = 2) -> [String] {
-        previewRows(template: template, subscriptions: subscriptions, mapped: mapped)
+        previewRows(template: template, subscriptions: subscriptions, mapped: mapped,
+                    style: style, regionRules: regionRules)
             .rows.prefix(limit).map(\.outputName)
     }
 
-    private nonisolated static func sampleNodes(subscriptions: [SubscriptionRecord]) -> [PortMappedNode] {
+    /// 还没有任何节点时拿来试跑的假节点。
+    ///
+    /// 规范化模式下多给一条订阅信息：它和普通节点走的是两条完全不同的规则，
+    /// 只看普通节点的话，用户改完地区表按下保存，才会第一次看见 `【INFO】…` 长什么样。
+    private nonisolated static func sampleNodes(subscriptions: [SubscriptionRecord],
+                                                style: NodeNamingStyle = .template) -> [PortMappedNode] {
         let source = subscriptions.first.map { [$0.id] } ?? []
-        return ["香港 01", "东京 02"].enumerated().map { offset, name in
+        let names = style == .normalized
+            ? ["香港 01", "东京 02", "剩余流量：89.98 GB"]
+            : ["香港 01", "东京 02"]
+        return names.enumerated().map { offset, name in
             PortMappedNode(
                 node: ProxyNode(id: "sample-\(offset)", name: name, server: "example.com", serverPort: 443,
                                 uuid: "", flow: "", serverName: "", publicKey: "", shortID: "",

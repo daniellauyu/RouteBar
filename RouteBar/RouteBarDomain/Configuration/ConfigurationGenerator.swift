@@ -87,10 +87,11 @@ public enum ConfigurationGenerator {
             "route": ["rules": rules],
         ]
         let json = try JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys])
-        let names = naming.names(for: mapped)
+        let plan = naming.plan(for: mapped)
+        let lines = policyLines(plan: plan, mapped: mapped)
         return GeneratedConfiguration(nodes: mapped, singBoxJSON: json,
-                                      surgeProxySection: "[Proxy]\n" + policyLines(names: names, mapped: mapped),
-                                      policyNames: names)
+                                      surgeProxySection: "[Proxy]\n" + lines.text,
+                                      policyNames: lines.names)
     }
 
     /// 裸策略行（无 `[Proxy]` 段头），本地订阅服务直接返回这一份。
@@ -103,13 +104,33 @@ public enum ConfigurationGenerator {
     /// 同一个端口在两种输出方式下会有两个名字。
     public nonisolated static func surgePolicyLines(_ mapped: [PortMappedNode],
                                                     naming: NodeNaming = .default) -> String {
-        policyLines(names: naming.names(for: mapped), mapped: mapped)
+        policyLines(plan: naming.plan(for: mapped), mapped: mapped).text
     }
 
-    private nonisolated static func policyLines(names: [String], mapped: [PortMappedNode]) -> String {
-        zip(names, mapped)
-            .map { "\($0) = socks5, 127.0.0.1, \($1.localPort)" }
+    /// 把规划铺成一行行 `名称 = socks5, 127.0.0.1, 端口`。
+    ///
+    /// 顺序、排除和那条合成的信息入口都在这里落地，而不是在命名那一层：名字必须与端口
+    /// **逐位对齐**（错一位就整份串台），所以 `NodeNaming` 只能返回对齐的数组；
+    /// 「怎么排、谁不输出」是这一层的事，因为只有这里每一行都自带端口，重排才是安全的。
+    private nonisolated static func policyLines(plan: NormalizationPlan,
+                                                mapped: [PortMappedNode]) -> (text: String, names: [String]) {
+        var names = plan.order.map { plan.names[$0] }
+        var ports = plan.order.map { mapped[$0].localPort }
+
+        // 信息入口：Surge 不接受只有名字、没有连接参数的策略项，所以借第一条信息节点的端口。
+        //
+        // 为什么要多这一条：`💡 订阅信息` 组按 `^【INFO】` 收节点，而 Surge 的 select 组
+        // 默认选中第一项——没有这条入口时，默认选中的会是「更新时间：…」这种连不通的假节点，
+        // 一旦有人手滑把这个组设成某条规则的出口，流量就直接断在那里。
+        if let first = plan.infoEntryIndex, let at = plan.order.firstIndex(of: first) {
+            names.insert(NodeNormalization.infoEntryName, at: at)
+            ports.insert(mapped[first].localPort, at: at)
+        }
+
+        let text = zip(names, ports)
+            .map { "\($0) = socks5, 127.0.0.1, \($1)" }
             .joined(separator: "\n") + "\n"
+        return (text, names)
     }
 
     private nonisolated static func outbound(for node: ProxyNode, tag: String) throws -> [String: Any] {

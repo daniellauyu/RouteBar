@@ -24,15 +24,16 @@ public protocol RouteBarAPIHost: AnyObject, Sendable {
     func apiProbeGeo(_ id: String) async
     /// 对指定目标逐节点测一次可达性。结果只在这次响应里出现，不写进节点。
     func apiProbeTargets(url: String, ids: [String]?) async throws -> APIProbeResponse
+    func apiSetRegionRules(_ rules: [RegionRule]) async
     func apiRegenerate() async
     func apiStartService() async
     func apiStopService() async
     func apiRefreshService() async
     func apiSetAutoUpdatePaused(_ paused: Bool) async
     /// 改全局节点名模板（每条订阅的覆盖走 `apiSaveSubscription`）。
-    func apiSetNodeNameTemplate(_ template: String) async
+    func apiSetNaming(_ input: APINamingInput) async
     /// 按给定模板试跑，不保存也不改任何东西。
-    func apiPreviewNodeNames(_ template: String) async -> APINamingPreview
+    func apiPreviewNodeNames(_ input: APINamingInput) async -> APINamingPreview
     func apiLogs() async -> APILogs
 }
 
@@ -140,14 +141,20 @@ public struct APIRouter: Sendable {
 
         case "naming":
             guard method == "POST" else { return .notFound }
+            // 地区表整张替换，请求体和模板那条不是一个形状，所以先分出去。
+            if rest == ["regions"] {
+                guard let input: APIRegionRulesInput = decode(request.body) else { return .badRequest }
+                await host.apiSetRegionRules(input.rules)
+                return encode(await host.apiSnapshot())
+            }
             guard let input: APINamingInput = decode(request.body) else { return .badRequest }
             // 试跑是只读的，但仍走 POST：模板要放在请求体里，而且写操作那套
             // `Content-Type: application/json` 的跨源防护对它同样适用。
             if rest == ["preview"] {
-                return encode(await host.apiPreviewNodeNames(input.template))
+                return encode(await host.apiPreviewNodeNames(input))
             }
             guard rest.isEmpty else { return .notFound }
-            await host.apiSetNodeNameTemplate(input.template)
+            await host.apiSetNaming(input)
             return encode(await host.apiSnapshot())
 
         case "probe":

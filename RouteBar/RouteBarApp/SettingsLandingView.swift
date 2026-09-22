@@ -105,6 +105,21 @@ struct SettingsLandingView: View {
 
                 settingsSection("节点命名") {
                     settingsRow(
+                        title: "命名方式",
+                        detail: model.settings.nodeNamingStyle == .normalized
+                            ? "把机场那些花名压成「【来源】地区NN」，并把混在节点里的流量、到期信息单独归到「【INFO】…」。地区表在网页控制台里改。"
+                            : "按下面的模板拼，机场给的名字原样保留。"
+                    ) {
+                        Picker("命名方式", selection: namingStyleSelection) {
+                            ForEach(NodeNamingStyle.allCases, id: \.rawValue) { style in
+                                Text(style.label).tag(style)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 150)
+                    }
+                    Divider()
+                    settingsRow(
                         title: "名称模板",
                         detail: templateIsValid
                             ? "决定这些出口在客户端里叫什么。改完按回车生效，会立即重新生成一次配置。"
@@ -116,6 +131,9 @@ struct SettingsLandingView: View {
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 260)
                                 .onSubmit { applyNameTemplate() }
+                                // 规范化模式下模板不参与生成，留着能改但标灰，
+                                // 免得有人改半天发现输出没变化。
+                                .disabled(model.settings.nodeNamingStyle == .normalized)
                             HStack(spacing: 6) {
                                 // 试跑用的是输入框里的内容，不是已保存的那份——先看结果再决定要不要生效，
                                 // 否则「保存了才知道长什么样」，而保存就等于把 Surge 里的名字全改了。
@@ -311,7 +329,20 @@ struct SettingsLandingView: View {
     private var namePreview: [String] {
         NodeNaming.preview(template: nameTemplate,
                            subscriptions: model.subscriptions,
-                           mapped: model.mappedNodes)
+                           mapped: model.mappedNodes,
+                           style: model.settings.nodeNamingStyle,
+                           regionRules: model.settings.regionRules)
+    }
+
+    /// 切换命名方式会立刻重算所有输出名——和改模板一样是即时生效的。
+    private var namingStyleSelection: Binding<NodeNamingStyle> {
+        Binding(get: { model.settings.nodeNamingStyle },
+                set: { style in
+                    guard style != model.settings.nodeNamingStyle else { return }
+                    var updated = model.settings
+                    updated.nodeNamingStyle = style
+                    model.saveSettings(updated)
+                })
     }
 
     private var overriddenSubscriptionSummary: String {

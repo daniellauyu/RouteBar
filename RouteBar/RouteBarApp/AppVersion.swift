@@ -4,7 +4,7 @@ import Foundation
 /// 同步到下面的 `fallback`（以及 Xcode 工程 MARKETING_VERSION）。
 /// 打包为 .app 后优先读取 bundle 的 CFBundleShortVersionString。
 enum AppVersion {
-    static let fallback = "1.17.4"
+    static let fallback = "1.18.0"
 
     static var current: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? fallback
