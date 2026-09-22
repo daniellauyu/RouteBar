@@ -32,6 +32,10 @@ enum WebUIScript {
     /* 上一次跑通的行。语法写到一半必然报错，这时把已有结果全清掉会让编辑器下面
        一片空白——留着上次的，只在顶上标一行「这是旧结果」。 */
     let scriptLastRows = null;
+    /* 当前展示的那一份结果。翻页要能在不重新请求的前提下重绘。 */
+    let scriptView = null;
+    let scriptPage = 0;
+    let scriptFilteredPage = 0;
     /* 目标可达的上一次结果。只活在这一页，刷新快照不会动它。 */
     let probeResponse = null;
     let probing = false;
@@ -762,54 +766,80 @@ enum WebUIScript {
       }
     }
 
+    /* 一页多少行。全量铺开的话，几百个节点就是几百行 DOM，边打字边重绘会明显发顿；
+       而截断（之前那版干的事）更糟——订阅信息恰好排在最后，一刀切下去就整段消失了，
+       看起来像是脚本没生成它们。 */
+    const SCRIPT_PAGE = 50;
+
     function renderScriptResult(data) {
+      const failed = Boolean(data.failure);
+      if (!failed) scriptLastRows = { rows: data.rows, filtered: data.filtered };
+      const keep = scriptLastRows || { rows: [], filtered: [] };
+
+      scriptView = {
+        failure: data.failure,
+        stale: failed && Boolean(scriptLastRows),
+        rows: keep.rows,
+        filtered: keep.filtered,
+        logs: data.logs || [],
+        warnings: data.warnings || [],
+        nodeCount: data.nodeCount,
+        ms: data.milliseconds,
+      };
+      /* 新结果回到第一页：行数变了之后停在第 3 页上通常没有意义。
+         翻页按钮直接调 drawScript，不走这里，所以翻页不会被重置。 */
+      scriptPage = 0;
+      scriptFilteredPage = 0;
+      drawScript();
+    }
+
+    function drawScript() {
+      if (!scriptView) return;
+      const view = scriptView;
       const box = $('script-result');
       const parts = [];
-      const failed = Boolean(data.failure);
-      const rows = failed ? (scriptLastRows && scriptLastRows.rows) : data.rows;
-      const filtered = failed ? (scriptLastRows && scriptLastRows.filtered) : data.filtered;
 
-      if (failed) {
-        parts.push(element('div', 'console bad', data.failure));
-        if (rows) parts.push(element('div', 'dim', t('naming.scriptStale')));
+      if (view.failure) {
+        parts.push(element('div', 'console bad', view.failure));
+        if (view.stale) parts.push(element('div', 'dim', t('naming.scriptStale')));
       } else {
-        scriptLastRows = { rows: data.rows, filtered: data.filtered };
         /* 保留 / 被过滤 分开报数。只报「输出了几行」看不出过滤条件写歪没有——
-           而过滤写歪的表现就是 Surge 里静静少几个节点，没有任何提示。 */
-        const kept = element('div', 'dim');
-        kept.append(element('strong', null,
-          t('naming.scriptKept', data.rows.length, data.nodeCount)));
-        if (data.filtered.length) {
-          kept.append(document.createTextNode('   '));
-          kept.append(element('span', 'tag warn',
-            t('naming.scriptFiltered', data.filtered.length, data.nodeCount)));
+           而写歪的表现就是 Surge 里静静少几个节点，没有任何提示。 */
+        const head = element('div', 'dim');
+        head.append(element('strong', null,
+          t('naming.scriptKept', view.rows.length, view.nodeCount)));
+        if (view.filtered.length) {
+          head.append(document.createTextNode('   '));
+          head.append(element('span', 'tag warn',
+            t('naming.scriptFiltered', view.filtered.length, view.nodeCount)));
         }
-        kept.append(document.createTextNode('   ' + t('naming.scriptTook', data.milliseconds)));
-        parts.push(kept);
+        head.append(document.createTextNode('   ' + t('naming.scriptTook', view.ms)));
+        parts.push(head);
       }
-      for (const warning of data.warnings || []) {
-        parts.push(element('div', 'console warn', warning));
-      }
-      if ((data.logs || []).length) {
-        parts.push(element('div', 'console', data.logs.join('\n')));
-      }
+      for (const warning of view.warnings) parts.push(element('div', 'console warn', warning));
+      if (view.logs.length) parts.push(element('div', 'console', view.logs.join('\n')));
 
-      /* 只列前若干行：脚本调通与否前几十行就看出来了，几百行 DOM 反而让页面发顿。 */
-      appendScriptRows(parts, rows, true);
-      if (filtered && filtered.length) {
-        parts.push(element('div', 'dim', t('naming.scriptFilteredHead', filtered.length)));
-        appendScriptRows(parts, filtered, false);
+      appendScriptRows(parts, view.rows, true, scriptPage,
+                       (page) => { scriptPage = page; drawScript(); });
+      if (view.filtered.length) {
+        parts.push(element('div', 'dim', t('naming.scriptFilteredHead', view.filtered.length)));
+        appendScriptRows(parts, view.filtered, false, scriptFilteredPage,
+                         (page) => { scriptFilteredPage = page; drawScript(); });
       }
       box.replaceChildren(...parts);
       box.hidden = false;
     }
 
-    function appendScriptRows(parts, rows, emitted) {
-      const shown = (rows || []).slice(0, 60);
-      for (let i = 0; i < shown.length; i++) {
-        const row = shown[i];
+    function appendScriptRows(parts, rows, emitted, page, onPage) {
+      const pages = Math.max(1, Math.ceil(rows.length / SCRIPT_PAGE));
+      const current = Math.min(Math.max(page, 0), pages - 1);
+      const offset = current * SCRIPT_PAGE;
+
+      for (const [i, row] of rows.slice(offset, offset + SCRIPT_PAGE).entries()) {
         const line = element('div', 'item');
-        line.append(element('span', 'idx', String(i + 1)));
+        /* 序号是**全局**的，不是本页从 1 数起——翻到第 2 页看到「1」会让人以为回到了开头，
+           而这个序号正是拿来对照 Surge 里节点顺序的。 */
+        line.append(element('span', 'idx', String(offset + i + 1)));
         line.append(element('div', 'grow ellipsis', row.name));
         if (emitted) {
           line.append(element('span', 'dim', '→'));
@@ -822,9 +852,19 @@ enum WebUIScript {
         line.append(element('span', 'tag', String(row.localPort)));
         parts.push(line);
       }
-      if (rows && rows.length > shown.length) {
-        parts.push(element('div', 'dim', t('naming.scriptMore', rows.length - shown.length)));
-      }
+
+      if (pages <= 1) return;
+      const pager = element('div', 'row wrap');
+      pager.style.marginTop = '6px';
+      const prev = element('button', 'ghost', t('naming.scriptPrev'));
+      prev.disabled = current === 0;
+      prev.onclick = () => onPage(current - 1);
+      const next = element('button', 'ghost', t('naming.scriptNext'));
+      next.disabled = current >= pages - 1;
+      next.onclick = () => onPage(current + 1);
+      pager.append(prev, next,
+                   element('span', 'dim', t('naming.scriptPage', current + 1, pages, rows.length)));
+      parts.push(pager);
     }
 
     /* ---------- 订阅 ---------- */
