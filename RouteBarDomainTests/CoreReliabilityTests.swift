@@ -89,6 +89,21 @@ struct CoreReliabilityTests {
         #expect(second.offset == 14)
     }
 
+    @Test func rawLogCompactsOnlyAfterFullIngestAndReadsNewFileFromStart() throws {
+        let home = try temporaryHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let file = home.appendingPathComponent("runtime.log")
+        try Data("old request\n".utf8).write(to: file)
+        let runtime = RuntimeManager()
+        #expect(!runtime.compactIngestedLog(at: file, through: 5, threshold: 1))
+        #expect(runtime.compactIngestedLog(at: file, through: 12, threshold: 1))
+        #expect(try Data(contentsOf: file).isEmpty)
+        try Data("new request\n".utf8).write(to: file)
+        let fresh = runtime.readNewLines(of: file, from: UInt64.max, firstReadLimit: 2)
+        #expect(fresh.text == "new request\n")
+        #expect(fresh.offset == 12)
+    }
+
     @Test func archivedLogReadsOnlyRequestedTail() throws {
         let home = try temporaryHome()
         defer { try? FileManager.default.removeItem(at: home) }

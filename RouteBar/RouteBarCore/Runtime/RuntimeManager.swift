@@ -210,24 +210,41 @@ public struct RuntimeManager: Sendable {
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd() else { return ("", offset) }
         // 首次读取（offset == 0）不把历史全灌进来：那可能是几十万行。只取末尾一小段。
-        var start = offset
-        if offset == 0, size > UInt64(firstReadLimit) {
+        // UInt64.max 表示刚截断过：必须从新文件开头读，不能再按首次启动的尾读策略跳过。
+        let afterCompaction = offset == UInt64.max
+        var start = afterCompaction ? 0 : offset
+        if !afterCompaction, offset == 0, size > UInt64(firstReadLimit) {
             start = size - UInt64(firstReadLimit)
-        } else if size < offset {
+        } else if !afterCompaction, size < offset {
             start = 0
         }
-        guard start < size else { return ("", start) }
+        guard start < size else { return ("", afterCompaction ? UInt64.max : start) }
         guard (try? handle.seek(toOffset: start)) != nil,
               let data = try? handle.read(upToCount: 1_048_576) else { return ("", offset) }
         // 按实际读到的完整行推进。文件增长不能让旧 size 成为下轮游标，
         // 尾部半行也必须留到下次，否则会丢失被分两次写入的日志。
-        guard let newline = data.lastIndex(of: 0x0A) else { return ("", start) }
+        guard let newline = data.lastIndex(of: 0x0A) else {
+            return ("", afterCompaction ? UInt64.max : start)
+        }
         let consumed = data.distance(from: data.startIndex, to: newline) + 1
         var complete = data.prefix(consumed)
         if start > 0, offset == 0, let firstNewline = complete.firstIndex(of: 0x0A) {
             complete = complete.suffix(from: complete.index(after: firstNewline))
         }
         return (String(decoding: complete, as: UTF8.self), start + UInt64(consumed))
+    }
+
+    /// 日志已经完整归档时才截断原始文件。launchd 持有文件描述符，不能靠删除或改名清理。
+    /// 文件仍在增长时不动它，避免丢掉尚未归档的尾部。
+    @discardableResult
+    public nonisolated func compactIngestedLog(at url: URL, through offset: UInt64,
+                                                threshold: UInt64 = 32 * 1024 * 1024) -> Bool {
+        guard offset >= threshold,
+              let handle = try? FileHandle(forUpdating: url) else { return false }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd(), size == offset,
+              (try? handle.truncate(atOffset: 0)) != nil else { return false }
+        return true
     }
 
     /// 清空 sing-box 的两份日志。

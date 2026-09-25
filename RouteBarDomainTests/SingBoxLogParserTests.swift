@@ -16,8 +16,8 @@ import Testing
 
         #expect(line.level == .info)
         #expect(line.category == "outbound/vless")
-        // 连接号与耗时被丢掉：运行日志按事件读，十位数字只会把正文挤到看不见。
-        #expect(line.message == "outbound connection to chatgpt.com:443")
+        // 连接号与耗时被丢掉，出站标签保留以便回查节点。
+        #expect(line.message == "[out-routebar-28] outbound connection to chatgpt.com:443")
         #expect(line.timestamp != nil)
     }
 

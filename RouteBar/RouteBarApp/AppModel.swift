@@ -24,6 +24,7 @@ final class AppModel: ObservableObject {
     @Published var alertMessage: String?
     @Published var singBoxLogText = ""
     @Published var singBoxErrorLogText = ""
+    let networkTest = NetworkTestModel()
     @Published private(set) var currentWindowDimensions = WindowDimensions(width: 0, height: 0)
 
     private let coordinator = SubscriptionCoordinator()
@@ -486,10 +487,9 @@ final class AppModel: ObservableObject {
 
     /// 把 sing-box 新写的日志并进日志页。
     ///
-    /// 只收 `.warning` 及以上。sing-box 的 INFO 是**每条连接一行**——真机上 35 天
+    /// 内存缓冲只收 `.warning` 及以上。sing-box 的 INFO 是**每条连接一行**——真机上 35 天
     /// 43 万行，全放进来的话，1000 条的环形缓冲会在几秒内被连接记录填满，
-    /// RouteBar 自己的事件一条都留不下，等于把这一页毁掉。生成的配置已经把级别
-    /// 降到 warn，这里再挡一道：老机器上那份历史日志里仍然全是 INFO。
+    /// RouteBar 自己的事件一条都留不下。完整连接记录会进入按日期归档的日志页。
     private func ingestSingBoxLog() async {
         guard !ingestInProgress else { return }
         ingestInProgress = true
@@ -508,6 +508,11 @@ final class AppModel: ObservableObject {
         guard await coordinator.archiveSingBoxLog(lines) else { return }
         await coordinator.saveIngestOffset(chunk.offset)
         singBoxLogOffset = chunk.offset
+        if await coordinator.compactIngestedSingBoxLog(through: chunk.offset) {
+            // 哨兵值让重启后的第一次读取也从新文件开头开始，不套用旧文件尾读策略。
+            singBoxLogOffset = UInt64.max
+            await coordinator.saveIngestOffset(UInt64.max)
+        }
         for line in lines where line.level >= .warning {
             log.ingest(line)
         }

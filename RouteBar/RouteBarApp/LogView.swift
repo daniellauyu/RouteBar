@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 /// 日志页：**唯一**一处诊断入口。
 ///
-/// RouteBar 自己的记录（订阅更新、配置生成、服务控制、测速）与 sing-box 报出来的问题
+/// RouteBar 自己的记录（订阅更新、配置生成、服务控制、测速）与 sing-box 的连接和问题
 /// 按时间混在一列里，用来源列区分。原来这两样分在两个页面，排查时要自己在脑子里
 /// 把两条时间线对齐——而它们描述的是同一件事的两侧：RouteBar 说「配置装好了」，
 /// sing-box 说「这个节点握手失败」，分开看谁也解释不了对方。
@@ -21,6 +21,7 @@ struct LogView: View {
     @State private var timeFilter: LogTimeFilter = .allDay
     @State private var source: LogSource?
     @State private var searchText = ""
+    @State private var onlyConnections = false
 
     /// 轮询间隔。够短，短到排查时不用怀疑「是没发生还是没刷新」；又不至于让一个
     /// 空转的循环显得频繁——没有新内容时这一轮只是 seek 到文件末尾比一下大小。
@@ -35,7 +36,7 @@ struct LogView: View {
                     model.dayEntries.isEmpty ? "这一天没有日志" : "没有匹配的日志",
                     systemImage: "doc.text.magnifyingglass",
                     description: Text(model.dayEntries.isEmpty
-                                      ? "RouteBar 的操作记录，以及 sing-box 报出来的问题，都会出现在这里。"
+                                      ? "RouteBar 的操作记录，以及 sing-box 的连接和问题，都会出现在这里。"
                                       : "放宽时段、级别或关键词试试。")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -122,6 +123,10 @@ struct LogView: View {
             Button("刷新", systemImage: "arrow.clockwise") {
                 Task { await model.refreshLogDates() }
             }
+            Button(onlyConnections ? "显示全部日志" : "只看连接请求",
+                   systemImage: onlyConnections ? "line.3.horizontal.decrease.circle.fill" : "network") {
+                onlyConnections.toggle()
+            }
             Divider()
             Button("复制当前结果", systemImage: "doc.on.doc") { copyVisible() }
                 .disabled(visibleEntries.isEmpty)
@@ -207,6 +212,7 @@ struct LogView: View {
                 entry.level >= minLevel
                     && timeFilter.matches(entry.timestamp)
                     && (source == nil || entry.source == source)
+                    && (!onlyConnections || entry.message.contains("outbound connection to "))
                     && (searchText.isEmpty
                         || entry.message.localizedCaseInsensitiveContains(searchText)
                         || entry.category.localizedCaseInsensitiveContains(searchText))
@@ -221,9 +227,10 @@ struct LogView: View {
 
     /// 筛掉了多少也要说：只显示「120 条」的话，用户不知道自己是看全了还是被条件挡住了。
     private var countDescription: String {
-        visibleEntries.count == model.dayEntries.count
+        let count = visibleEntries.count == model.dayEntries.count
             ? "\(model.dayEntries.count) 条"
             : "\(visibleEntries.count) / \(model.dayEntries.count) 条"
+        return model.dayEntries.count >= 5_000 ? "\(count)（最近 5000 条）" : count
     }
 
     /// 最近两天用「今天 / 昨天」，更早的给日期加星期。

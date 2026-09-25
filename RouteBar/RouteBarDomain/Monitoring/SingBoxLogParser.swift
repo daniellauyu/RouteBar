@@ -149,9 +149,13 @@ public enum SingBoxLogParser {
         guard let colon = text.range(of: ": ") else { return ("sing-box", text) }
         let head = String(text[text.startIndex..<colon.lowerBound])
         guard !head.isEmpty, !head.contains(" ") else { return ("sing-box", text) }
-        // `outbound/vless[out-routebar-28]` → `outbound/vless`，标签本身在正文里还有。
+        // 出站标签对应 RouteBar 的节点端口；保留在正文里，归档后仍能回查出口。
         let category = head.split(separator: "[", maxSplits: 1).first.map(String.init) ?? head
-        return (category, String(text[colon.upperBound...]))
+        let message = String(text[colon.upperBound...])
+        if category.hasPrefix("outbound/"), let bracket = head.firstIndex(of: "[") {
+            return (category, "\(head[bracket...]) \(message)")
+        }
+        return (category, message)
     }
 
     private nonisolated static let formatter: DateFormatter = {

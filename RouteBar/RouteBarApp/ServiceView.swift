@@ -3,7 +3,7 @@ import SwiftUI
 /// 服务页：sing-box 的运行状态、托管文件与它自己的日志。
 ///
 /// 原来这些内容分散在「服务管理」「日志」「设置」三页，排查一次问题要来回跳；
-/// 现在与 sing-box 进程有关的一切都在这一页，「日志」页只留 RouteBar 自身的记录。
+/// 进程状态与原始文件在这一页，合并后的连接与事件记录在「日志」页。
 struct ServiceView: View {
     @EnvironmentObject private var model: AppModel
 
@@ -151,9 +151,9 @@ struct ServiceView: View {
                         .frame(width: 18)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("这份文件的内容已并入「日志」页").font(.callout.weight(.medium))
-                        Text("和 RouteBar 自己的记录按日期归档在一起，可按时段、级别、来源筛选，"
+                        Text("和 RouteBar 自己的记录按日期归档在一起，可按时段、级别、来源和域名筛选，"
                              + "保留 \(LogArchiveStore.retentionDays) 天。"
-                             + "sing-box 的日志级别是 warn，所以下面这份原始文件不会再因为逐条连接而疯长；"
+                             + "连接请求会记录目标与出站标签；原始文件归档后会自动清理。"
                              + "清空它不会动已经归档的历史。")
                             .font(.caption)
                             .foregroundStyle(.secondary)

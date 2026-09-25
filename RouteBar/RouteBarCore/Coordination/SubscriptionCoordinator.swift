@@ -694,6 +694,12 @@ public actor SubscriptionCoordinator {
 
     public func saveIngestOffset(_ offset: UInt64) { logArchive.saveIngestOffset(offset) }
 
+    /// 归档成功且读到文件末尾后，压缩 launchd 持有的原始 stderr 文件。
+    @discardableResult
+    public func compactIngestedSingBoxLog(through offset: UInt64) -> Bool {
+        runtime.compactIngestedLog(at: runtime.paths.singBoxErrorLog, through: offset)
+    }
+
     public func deleteArchivedLog(_ day: Date) -> CoordinatorOutcome {
         let removed = logArchive.delete(day)
         return outcome([.init(removed ? .notice : .warning, "日志",

@@ -34,6 +34,7 @@ struct ConfigurationGeneratorTests {
         #expect(result.nodes[0].localPort == 7701)
         #expect(result.nodes[1].localPort == 7702)
         let object = try #require(JSONSerialization.jsonObject(with: result.singBoxJSON) as? [String: Any])
+        #expect((object["log"] as? [String: Any])?["level"] as? String == "info")
         #expect((object["inbounds"] as? [[String: Any]])?.count == 2)
         #expect((object["outbounds"] as? [[String: Any]])?.count == 2)
         let route = try #require(object["route"] as? [String: Any])
