@@ -24,7 +24,6 @@ final class AppModel: ObservableObject {
     @Published var alertMessage: String?
     @Published var singBoxLogText = ""
     @Published var singBoxErrorLogText = ""
-    let networkTest = NetworkTestModel()
     @Published private(set) var currentWindowDimensions = WindowDimensions(width: 0, height: 0)
 
     private let coordinator = SubscriptionCoordinator()

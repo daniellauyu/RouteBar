@@ -17,7 +17,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
         switch self {
         case .status: [.overview, .setup]
         case .content: [.subscriptions, .nodes]
-        case .runtime: [.service, .networkTest, .logs]
+        case .runtime: [.service, .logs]
         case .advanced: [.settings, .environment, .about]
         }
     }
@@ -32,7 +32,6 @@ enum AppSection: String, CaseIterable, Identifiable {
     case subscriptions = "订阅"
     case nodes = "节点"
     case service = "服务"
-    case networkTest = "网络测试"
     case logs = "日志"
     case settings = "通用"
     case environment = "环境"
@@ -47,7 +46,6 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .subscriptions: "square.3.layers.3d"
         case .nodes: "point.3.connected.trianglepath.dotted"
         case .service: "bolt.horizontal.circle"
-        case .networkTest: "network"
         case .logs: "doc.text.magnifyingglass"
         case .settings: "gearshape"
         case .environment: "wrench.and.screwdriver"

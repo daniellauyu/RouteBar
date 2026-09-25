@@ -119,7 +119,6 @@ struct MainWindowView: View {
         case .subscriptions: SubscriptionsView()
         case .nodes: NodesView()
         case .service: ServiceView()
-        case .networkTest: NetworkTestView(test: model.networkTest)
         case .logs: LogView()
         case .settings: SettingsLandingView()
         case .environment: EnvironmentView()
