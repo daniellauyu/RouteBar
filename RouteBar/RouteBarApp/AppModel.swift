@@ -503,7 +503,8 @@ final class AppModel: ObservableObject {
         // 无条件回写偏移等于在用户盯着日志时每隔几秒写一次盘，而绝大多数轮次
         // sing-box 一个字节都没写。
         guard chunk.offset != singBoxLogOffset || !chunk.text.isEmpty else { return }
-        let lines = SingBoxLogParser.parse(tail: chunk.text)
+        let parsed = SingBoxLogParser.parse(tail: chunk.text)
+        let lines = await resolveConnectionNames(parsed)
         // 先归档再筛：归档留全量（回溯「那天发生了什么」），内存缓冲只留要紧的。
         guard await coordinator.archiveSingBoxLog(lines) else { return }
         await coordinator.saveIngestOffset(chunk.offset)
@@ -584,11 +585,23 @@ final class AppModel: ObservableObject {
 
     private func loadDay() async {
         let day = viewingDay
-        dayEntries = await coordinator.archivedLog(day).map { line in
+        let archived = await coordinator.archivedLog(day)
+        let resolved = await resolveConnectionNames(archived)
+        dayEntries = resolved.map { line in
             let (category, isRouteBar) = LogArchive.untag(line.category)
             return RuntimeLogEntry(timestamp: line.timestamp ?? day, level: line.level,
                                    category: category, message: line.message,
                                    source: isRouteBar ? .routeBar : .singBox)
+        }
+    }
+
+    private func resolveConnectionNames(_ lines: [SingBoxLogLine]) async -> [SingBoxLogLine] {
+        guard lines.contains(where: { $0.message.hasPrefix("[out-routebar-") }),
+              let snapshot = await coordinator.generatedSurgeSnapshot() else { return lines }
+        let names = ConnectionLogPresentation.namesByPort(in: snapshot.section)
+        return lines.map {
+            ConnectionLogPresentation.resolve($0, namesByPort: names,
+                                               configurationDate: snapshot.modifiedAt)
         }
     }
 

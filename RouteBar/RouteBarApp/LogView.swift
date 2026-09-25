@@ -212,7 +212,9 @@ struct LogView: View {
                 entry.level >= minLevel
                     && timeFilter.matches(entry.timestamp)
                     && (source == nil || entry.source == source)
-                    && (!onlyConnections || entry.message.contains("outbound connection to "))
+                    && (!onlyConnections || (entry.category.hasPrefix("outbound/")
+                        && (entry.message.contains("outbound connection to ")
+                            || entry.message.contains(" → "))))
                     && (searchText.isEmpty
                         || entry.message.localizedCaseInsensitiveContains(searchText)
                         || entry.category.localizedCaseInsensitiveContains(searchText))

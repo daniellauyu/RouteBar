@@ -690,6 +690,15 @@ public actor SubscriptionCoordinator {
 
     public func archivedLogDirectory() -> URL { logArchive.directory }
 
+    /// 从实际生成的 Surge 代理段取名字，包含脚本命名结果。
+    public func generatedSurgeSnapshot() -> (section: String, modifiedAt: Date)? {
+        let url = stateStore.surgeSnippetURL
+        guard let section = try? String(contentsOf: url, encoding: .utf8),
+              let modifiedAt = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate else { return nil }
+        return (section, modifiedAt)
+    }
+
     public func ingestOffset() -> UInt64 { logArchive.loadIngestOffset() }
 
     public func saveIngestOffset(_ offset: UInt64) { logArchive.saveIngestOffset(offset) }

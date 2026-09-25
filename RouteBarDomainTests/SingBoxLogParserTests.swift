@@ -91,4 +91,29 @@ import Testing
         #expect(lines.map(\.message) == ["a", "b", "c"])
         #expect(lines.map(\.level) == [.info, .error, .info])
     }
+
+    @Test func showsGeneratedNodeNameForCurrentConnections() throws {
+        let section = """
+        [Proxy]
+        【INFO】查看订阅信息 = socks5, 127.0.0.1, 7701, udp-relay=true
+        【INFO】剩余流量 = socks5, 127.0.0.1, 7701, udp-relay=true
+        【STOTIK】新加坡04 = socks5, 127.0.0.1, 7770, udp-relay=true
+        """
+        let names = ConnectionLogPresentation.namesByPort(in: section)
+        #expect(names[7701] == "【INFO】剩余流量")
+        #expect(names[7770] == "【STOTIK】新加坡04")
+
+        let raw = "+0800 2026-09-25 14:44:54 INFO [2155231753 14ms] "
+            + "outbound/vless[out-routebar-70]: outbound connection to accounts.google.com:443"
+        let parsed = try #require(SingBoxLogParser.parse(raw))
+        let current = ConnectionLogPresentation.resolve(
+            parsed, namesByPort: names,
+            configurationDate: try #require(parsed.timestamp).addingTimeInterval(-10))
+        #expect(current.message == "【STOTIK】新加坡04 → accounts.google.com:443")
+        // 归档后再次读取不应重复添加名字；旧配置的日志也不能误用当前映射。
+        #expect(ConnectionLogPresentation.resolve(current, namesByPort: names,
+                 configurationDate: try #require(parsed.timestamp)).message == current.message)
+        #expect(ConnectionLogPresentation.resolve(parsed, namesByPort: names,
+                 configurationDate: try #require(parsed.timestamp).addingTimeInterval(10)).message == parsed.message)
+    }
 }

@@ -169,3 +169,41 @@ public enum SingBoxLogParser {
         formatter.date(from: text)
     }
 }
+
+/// 将 sing-box 的内部出站标签换成用户在 Surge 中看到的节点名。
+/// 只对当前生成配置生效的时间段解析；端口重新分配后，旧日志不能套用新名字。
+public enum ConnectionLogPresentation {
+    public nonisolated static func namesByPort(in surgeSection: String) -> [Int: String] {
+        let separator = " = socks5, 127.0.0.1, "
+        var names: [Int: String] = [:]
+        for row in surgeSection.split(separator: "\n") {
+            guard let range = row.range(of: separator),
+                  let rawPort = row[range.upperBound...].split(separator: ",", maxSplits: 1).first,
+                  let port = Int(rawPort) else { continue }
+            let name = String(row[..<range.lowerBound])
+            if !name.isEmpty { names[port] = name }
+        }
+        return names
+    }
+
+    public nonisolated static func resolve(_ line: SingBoxLogLine,
+                                           namesByPort: [Int: String],
+                                           configurationDate: Date) -> SingBoxLogLine {
+        // sing-box 时间戳只精确到秒；留一秒余量给同一秒内刚写出的配置。
+        guard let timestamp = line.timestamp,
+              timestamp.addingTimeInterval(1) >= configurationDate,
+              line.category.hasPrefix("outbound/"),
+              line.message.hasPrefix("[out-routebar-") else { return line }
+        let text = line.message
+        guard let close = text.firstIndex(of: "]"),
+              let index = Int(text[text.index(text.startIndex, offsetBy: 14)..<close]),
+              index > 0,
+              let name = namesByPort[7700 + index] else { return line }
+        let rest = text[text.index(after: close)...].trimmingCharacters(in: .whitespaces)
+        let prefix = "outbound connection to "
+        guard rest.hasPrefix(prefix) else { return line }
+        let target = rest.dropFirst(prefix.count)
+        return SingBoxLogLine(timestamp: timestamp, level: line.level,
+                              category: line.category, message: "\(name) → \(target)")
+    }
+}
