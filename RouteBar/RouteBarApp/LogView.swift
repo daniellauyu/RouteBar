@@ -29,6 +29,8 @@ struct LogView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            connectionLoggingControl
+            Divider()
             controlBar
             Divider()
             if visibleEntries.isEmpty {
@@ -59,6 +61,28 @@ struct LogView: View {
     }
 
     // MARK: - 筛选栏
+
+    private var connectionLoggingControl: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "network")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("连接请求日志 · \(model.settings.connectionLoggingEnabled ? "已开启" : "已关闭")")
+                    .font(.callout.weight(.medium))
+                Text("开启后记录目标域名与出口节点；关闭后仍记录警告和错误。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            Toggle("开启连接请求日志", isOn: Binding(
+                get: { model.settings.connectionLoggingEnabled },
+                set: { model.setConnectionLoggingEnabled($0) }
+            ))
+            .disabled(model.updatingConnectionLogging)
+        }
+        .padding(.horizontal, LogListLayout.horizontalInset)
+        .padding(.vertical, 10)
+    }
 
     private var controlBar: some View {
         HStack(spacing: 0) {

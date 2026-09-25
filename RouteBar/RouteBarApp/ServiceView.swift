@@ -6,7 +6,6 @@ import SwiftUI
 /// 进程状态与原始文件在这一页，合并后的连接与事件记录在「日志」页。
 struct ServiceView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var updatingConnectionLogging = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -176,19 +175,10 @@ struct ServiceView: View {
                     Spacer(minLength: 12)
                     Toggle("连接请求日志", isOn: Binding(
                         get: { model.settings.connectionLoggingEnabled },
-                        set: { enabled in
-                            guard !updatingConnectionLogging else { return }
-                            updatingConnectionLogging = true
-                            Task {
-                                var updated = model.settings
-                                updated.connectionLoggingEnabled = enabled
-                                await model.saveSettingsAsync(updated)
-                                updatingConnectionLogging = false
-                            }
-                        }
+                        set: { model.setConnectionLoggingEnabled($0) }
                     ))
                     .labelsHidden()
-                    .disabled(updatingConnectionLogging)
+                    .disabled(model.updatingConnectionLogging)
                 }
                 .padding(.vertical, 6)
                 Divider()

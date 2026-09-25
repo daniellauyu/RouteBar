@@ -24,6 +24,7 @@ final class AppModel: ObservableObject {
     @Published var alertMessage: String?
     @Published var singBoxLogText = ""
     @Published var singBoxErrorLogText = ""
+    @Published private(set) var updatingConnectionLogging = false
     @Published private(set) var currentWindowDimensions = WindowDimensions(width: 0, height: 0)
 
     private let coordinator = SubscriptionCoordinator()
@@ -644,6 +645,17 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: - 设置
+
+    func setConnectionLoggingEnabled(_ enabled: Bool) {
+        guard !updatingConnectionLogging, settings.connectionLoggingEnabled != enabled else { return }
+        updatingConnectionLogging = true
+        Task {
+            var updated = settings
+            updated.connectionLoggingEnabled = enabled
+            await saveSettingsAsync(updated)
+            updatingConnectionLogging = false
+        }
+    }
 
     func saveSettings(_ newSettings: RouteBarSettings) {
         Task { await saveSettingsAsync(newSettings) }
