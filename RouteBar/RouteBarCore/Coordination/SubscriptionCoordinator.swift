@@ -145,6 +145,14 @@ public actor SubscriptionCoordinator {
                                   "已接管现有的 sing-box 服务「\(adopted.label)」，配置与日志路径取自它的 LaunchAgent"))
         }
         serviceState = await runtime.status()
+        // 旧版本没有开关，磁盘配置可能仍为 info。升级后若默认关闭，必须同步到
+        // 正在运行的 sing-box；否则界面显示关闭，数据面却还在逐连接写日志。
+        let desiredLogLevel = settings.connectionLoggingEnabled ? "info" : "warn"
+        if serviceState.isRunning, stateLoadFailure == nil, !subscriptions.isEmpty,
+           let installedLogLevel = runtime.installedLogLevel(),
+           installedLogLevel != desiredLogLevel {
+            messages += await regenerateMessages(forceRestart: true)
+        }
         if subscriptions.isEmpty, stateLoadFailure == nil {
             do {
                 if let imported = try importExistingSubscription() {
@@ -426,7 +434,8 @@ public actor SubscriptionCoordinator {
 
         do {
             let generated = try ConfigurationGenerator.generate(
-                nodes: active, naming: naming, plan: scripted.plan)
+                nodes: active, naming: naming, plan: scripted.plan,
+                connectionLoggingEnabled: settings.connectionLoggingEnabled)
             guard !generated.nodes.isEmpty else {
                 serviceState = await runtime.stop()
                 if let reason = serviceState.failureReason {
@@ -728,18 +737,21 @@ public actor SubscriptionCoordinator {
 
     public func saveSettings(_ newSettings: RouteBarSettings) async -> CoordinatorOutcome {
         let namingChanged = newSettings.nodeNameTemplate != settings.nodeNameTemplate
+        let loggingChanged = newSettings.connectionLoggingEnabled != settings.connectionLoggingEnabled
         do {
             try stateStore.saveSettings(newSettings)
             settings = newSettings
             runtime = RuntimeManager(settings: newSettings)
             serviceState = await runtime.status()
             var messages: [OutcomeMessage] = [
-                .init(.notice, "设置", namingChanged ? "节点命名规则已更新" : "环境路径已更新"),
+                .init(.notice, "设置", loggingChanged
+                      ? (newSettings.connectionLoggingEnabled ? "已开启连接日志" : "已关闭连接日志")
+                      : (namingChanged ? "节点命名规则已更新" : "环境路径已更新")),
             ]
             // 命名只影响 Surge 那一侧，改完不重装的话，配置文件里还是旧名字，
             // 而界面已经显示新规则了——要等下一次订阅更新才对得上。
-            if namingChanged {
-                messages += await regenerateMessages(forceRestart: false)
+            if namingChanged || loggingChanged {
+                messages += await regenerateMessages(forceRestart: loggingChanged)
             }
             return outcome(messages)
         } catch {

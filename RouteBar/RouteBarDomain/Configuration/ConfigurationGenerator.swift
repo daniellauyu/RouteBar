@@ -58,7 +58,8 @@ public enum ConfigurationGenerator {
     public nonisolated static func generate(nodes: [ProxyNode],
                                             startingPort: Int = 7701,
                                             naming: NodeNaming = .default,
-                                            plan: NormalizationPlan? = nil) throws -> GeneratedConfiguration {
+                                            plan: NormalizationPlan? = nil,
+                                            connectionLoggingEnabled: Bool = false) throws -> GeneratedConfiguration {
         let mapped = portMapping(nodes: nodes, startingPort: startingPort)
 
         let inbounds: [[String: Any]] = mapped.enumerated().map { index, item in
@@ -73,10 +74,10 @@ public enum ConfigurationGenerator {
             ["inbound": [tag("in", index)], "action": "route", "outbound": tag("out", index),
              "udp_disable_domain_unmapping": true]
         }
-        // INFO 记录每条经过 RouteBar 的出站连接，供日志页按域名和节点排查。
+        // 需要排查时才开 INFO。平时只记 WARN/ERROR，避免大量普通连接日志。
         // 原始 stderr 文件由日志摄入流程在归档后定期截断，日期归档保留 14 天。
         let document: [String: Any] = [
-            "log": ["level": "info", "timestamp": true],
+            "log": ["level": connectionLoggingEnabled ? "info" : "warn", "timestamp": true],
             "inbounds": inbounds,
             "outbounds": outbounds,
             "route": ["rules": rules],

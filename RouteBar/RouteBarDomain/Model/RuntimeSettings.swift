@@ -30,6 +30,8 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
     public var nodeNamingStyle: NodeNamingStyle
     /// 规范化用的地区识别表，顺序即优先级。只在 `nodeNamingStyle == .normalized` 时生效。
     public var regionRules: [RegionRule]
+    /// 逐连接记录目标域名与出口节点。默认关闭，警告和错误始终记录。
+    public var connectionLoggingEnabled: Bool
 
     public nonisolated init(singBoxBinaryPath: String,
                             singBoxConfigPath: String,
@@ -41,7 +43,8 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
                             subscriptionToken: String = RouteBarSettings.makeToken(),
                             nodeNameTemplate: String = NodeNaming.defaultTemplate,
                             nodeNamingStyle: NodeNamingStyle = .template,
-                            regionRules: [RegionRule] = NodeNormalization.defaultRegionRules) {
+                            regionRules: [RegionRule] = NodeNormalization.defaultRegionRules,
+                            connectionLoggingEnabled: Bool = false) {
         self.singBoxBinaryPath = singBoxBinaryPath
         self.singBoxConfigPath = singBoxConfigPath
         self.singBoxLogPath = singBoxLogPath
@@ -53,6 +56,7 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
         self.nodeNameTemplate = nodeNameTemplate
         self.nodeNamingStyle = nodeNamingStyle
         self.regionRules = regionRules
+        self.connectionLoggingEnabled = connectionLoggingEnabled
     }
 
     public nonisolated static func makeToken() -> String {
@@ -94,7 +98,7 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
         case singBoxBinaryPath, singBoxConfigPath, singBoxLogPath, singBoxErrorLogPath
         case launchAgentPath, launchAgentLabel
         case subscriptionPort, subscriptionToken, nodeNameTemplate
-        case nodeNamingStyle, regionRules
+        case nodeNamingStyle, regionRules, connectionLoggingEnabled
     }
 
     public nonisolated init(from decoder: Decoder) throws {
@@ -121,6 +125,7 @@ public struct RouteBarSettings: nonisolated Codable, nonisolated Equatable, Send
         // 空表会让每个节点都认不出地区、全部堆进「小众」。
         let decodedRules = try container.decodeIfPresent([RegionRule].self, forKey: .regionRules) ?? []
         regionRules = decodedRules.isEmpty ? NodeNormalization.defaultRegionRules : decodedRules
+        connectionLoggingEnabled = try container.decodeIfPresent(Bool.self, forKey: .connectionLoggingEnabled) ?? false
     }
 
     /// Homebrew 在 Apple Silicon 与 Intel 上的前缀不同，装法也可能是别的包管理器。

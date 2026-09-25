@@ -34,13 +34,23 @@ struct ConfigurationGeneratorTests {
         #expect(result.nodes[0].localPort == 7701)
         #expect(result.nodes[1].localPort == 7702)
         let object = try #require(JSONSerialization.jsonObject(with: result.singBoxJSON) as? [String: Any])
-        #expect((object["log"] as? [String: Any])?["level"] as? String == "info")
+        #expect((object["log"] as? [String: Any])?["level"] as? String == "warn")
         #expect((object["inbounds"] as? [[String: Any]])?.count == 2)
         #expect((object["outbounds"] as? [[String: Any]])?.count == 2)
         let route = try #require(object["route"] as? [String: Any])
         #expect((route["rules"] as? [[String: Any]])?.count == 2)
         #expect(result.surgeProxySection.contains("RouteBar 01 - Hong Kong 01 = socks5, 127.0.0.1, 7701"))
         #expect(result.surgeProxySection.contains("RouteBar 02 - Tokyo 02 = socks5, 127.0.0.1, 7702"))
+    }
+
+    @Test func connectionLoggingCanBeEnabledWithoutChangingRoutes() throws {
+        let node = makeNode("Singapore", "sg.example.com")
+        let quiet = try ConfigurationGenerator.generate(nodes: [node])
+        let verbose = try ConfigurationGenerator.generate(nodes: [node], connectionLoggingEnabled: true)
+        let document = try #require(JSONSerialization.jsonObject(with: verbose.singBoxJSON) as? [String: Any])
+        #expect((document["log"] as? [String: Any])?["level"] as? String == "info")
+        #expect(quiet.surgeProxySection == verbose.surgeProxySection)
+        #expect(quiet.nodes.map(\.localPort) == verbose.nodes.map(\.localPort))
     }
 
     @Test func preservesDuplicateEndpointsAsDistinctNamedOutputs() throws {

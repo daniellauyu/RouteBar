@@ -121,6 +121,14 @@ public struct RuntimeManager: Sendable {
         (try? Data(contentsOf: paths.singBoxConfig)) == generated.singBoxJSON
     }
 
+    /// 检查磁盘配置的日志级别，用于升级后将运行配置与新开关对齐。
+    public nonisolated func installedLogLevel() -> String? {
+        guard let data = try? Data(contentsOf: paths.singBoxConfig),
+              let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let log = document["log"] as? [String: Any] else { return nil }
+        return log["level"] as? String
+    }
+
     // MARK: - LaunchAgent
 
     /// 当前 plist 与设置的关系，决定「环境」页给出什么操作。

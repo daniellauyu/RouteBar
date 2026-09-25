@@ -94,12 +94,20 @@ import Testing
         #expect(decoded.launchAgentLabel == "com.daniellau.sing-box-surge")
         #expect(decoded.subscriptionPort == 7899)
         #expect(decoded.subscriptionToken.count == 16)        // 缺失时自动补一个
+        #expect(!decoded.connectionLoggingEnabled)
 
         // 写回去时那两个键不该再出现——功能没了，留着只会让人以为还能配。
         let object = try #require(
             JSONSerialization.jsonObject(with: JSONEncoder().encode(decoded)) as? [String: Any])
         #expect(object["surgeOutputMode"] == nil)
         #expect(object["surgeProfilePath"] == nil)
+    }
+
+    @Test func connectionLoggingSettingRoundTrips() throws {
+        var settings = RouteBarSettings.defaults()
+        settings.connectionLoggingEnabled = true
+        let decoded = try JSONDecoder().decode(RouteBarSettings.self, from: JSONEncoder().encode(settings))
+        #expect(decoded.connectionLoggingEnabled)
     }
 
     @Test func subscriptionURLIsLoopbackOnlyAndCarriesToken() {

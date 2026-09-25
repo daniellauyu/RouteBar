@@ -6,6 +6,7 @@ import SwiftUI
 /// 进程状态与原始文件在这一页，合并后的连接与事件记录在「日志」页。
 struct ServiceView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var updatingConnectionLogging = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -153,7 +154,7 @@ struct ServiceView: View {
                         Text("这份文件的内容已并入「日志」页").font(.callout.weight(.medium))
                         Text("和 RouteBar 自己的记录按日期归档在一起，可按时段、级别、来源和域名筛选，"
                              + "保留 \(LogArchiveStore.retentionDays) 天。"
-                             + "连接请求会记录目标与出站标签；原始文件归档后会自动清理。"
+                             + "开启连接日志时记录目标与节点；原始文件归档后会自动清理。"
                              + "清空它不会动已经归档的历史。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -162,6 +163,32 @@ struct ServiceView: View {
                     Spacer(minLength: 12)
                     Button("去看") { model.selectedSection = .logs }
                         .controlSize(.small)
+                }
+                .padding(.vertical, 6)
+                Divider()
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("连接请求日志").font(.callout.weight(.medium))
+                        Text("开启后记录目标域名与出口节点；关闭后仍记录警告和错误。切换会重启 sing-box。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 12)
+                    Toggle("连接请求日志", isOn: Binding(
+                        get: { model.settings.connectionLoggingEnabled },
+                        set: { enabled in
+                            guard !updatingConnectionLogging else { return }
+                            updatingConnectionLogging = true
+                            Task {
+                                var updated = model.settings
+                                updated.connectionLoggingEnabled = enabled
+                                await model.saveSettingsAsync(updated)
+                                updatingConnectionLogging = false
+                            }
+                        }
+                    ))
+                    .labelsHidden()
+                    .disabled(updatingConnectionLogging)
                 }
                 .padding(.vertical, 6)
                 Divider()
